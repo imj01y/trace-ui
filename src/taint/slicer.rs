@@ -107,6 +107,7 @@ fn enqueue_dep(
 ///
 /// Iterates with memchr (zero-copy, no UTF-8 validation).
 /// Returns the number of lines written.
+#[allow(dead_code)]
 pub fn write_sliced_bytes<W: Write>(
     data: &[u8],
     marked: &BitVec,

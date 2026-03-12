@@ -8,6 +8,7 @@ use std::fmt;
 #[derive(Copy, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct RegId(pub u8);
 
+#[allow(dead_code)]
 impl RegId {
     pub const X0: Self = Self(0);
     pub const X1: Self = Self(1);
@@ -166,6 +167,7 @@ pub fn parse_reg(name: &str) -> Option<RegId> {
 /// 从反汇编文本中提取的操作数，仅保留对依赖分析有用的信息。
 /// 不包含内存引用（由 [`MemOp`] 单独表示）和条件码（由 [`InsnClass`](crate::insn_class::InsnClass) 隐含）。
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Operand {
     /// 普通寄存器操作数（x0-x28, sp, v0-v31, nzcv 等）。
     Reg(RegId),
@@ -276,6 +278,7 @@ pub struct ParsedLine {
 /// 指定从哪个寄存器或内存地址开始反向切片。
 /// 支持 `@last`（最后一次定义）和 `@LINE`（指定行号处的定义）两种模式。
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum FromSpec {
     RegLast(RegId),    // reg:x0@last
     RegAt(RegId, u32), // reg:x0@5000

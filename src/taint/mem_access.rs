@@ -21,6 +21,7 @@ pub struct MemAccessIndex {
     index: HashMap<u64, Vec<MemAccessRecord>>,
 }
 
+#[allow(dead_code)]
 impl MemAccessIndex {
     pub fn new() -> Self {
         Self {

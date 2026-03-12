@@ -118,11 +118,13 @@ pub fn push_unique<A: smallvec::Array<Item = u32>>(deps: &mut SmallVec<A>, val: 
 }
 
 /// Scan from an in-memory string (for testing).
+#[allow(dead_code)]
 pub fn scan_from_string(trace: &str, data_only: bool) -> Result<ScanState> {
     scan_from_string_with_targets(trace, data_only, 0, None, &Default::default())
 }
 
 /// Scan from an in-memory string with range limiting.
+#[allow(dead_code)]
 pub fn scan_from_string_with_range(
     trace: &str,
     data_only: bool,
@@ -133,6 +135,7 @@ pub fn scan_from_string_with_range(
 }
 
 /// Scan from an in-memory string with full options (range + @LINE targets).
+#[allow(dead_code)]
 pub fn scan_from_string_with_targets(
     trace: &str,
     data_only: bool,
@@ -168,6 +171,7 @@ pub fn scan_from_string_with_targets(
 /// empty deps entry to maintain index alignment.
 ///
 /// Use this directly when the caller already has the mmap and wants to reuse it later.
+#[allow(dead_code)]
 pub fn scan_pass1_bytes(
     data: &[u8],
     data_only: bool,

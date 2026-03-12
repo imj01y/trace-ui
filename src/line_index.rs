@@ -7,6 +7,7 @@ pub struct LineIndex {
 
 impl LineIndex {
     /// 从内存映射的字节数据构建行偏移索引。
+    #[allow(dead_code)]
     pub fn build(data: &[u8]) -> Self {
         Self::build_with_progress(data, None)
     }

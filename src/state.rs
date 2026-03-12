@@ -16,6 +16,7 @@ pub struct Phase2State {
 }
 
 /// 单个 trace 文件的会话状态
+#[allow(dead_code)]
 pub struct SessionState {
     pub mmap: Arc<Mmap>,
     pub line_index: LineIndex,

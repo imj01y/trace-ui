@@ -28,6 +28,7 @@ macro_rules! nop_mnemonics {
 /// eliminating the need for mnemonic-level switching in the slicer.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum InsnClass {
     // A: Arithmetic/Logic/Shift — DEF=Rd, USE=Rn,Rm
     AluReg,

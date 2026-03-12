@@ -61,6 +61,7 @@ pub fn parse_line(raw: &str) -> Option<ParsedLine> {
 }
 
 /// Parse a trace line (full mode for validate — includes arrow register extraction).
+#[allow(dead_code)]
 pub fn parse_line_full(raw: &str) -> Option<ParsedLine> {
     parse_line_inner(raw, true)
 }
