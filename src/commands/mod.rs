@@ -8,3 +8,4 @@ pub mod memory;
 pub mod registers;
 pub mod search;
 pub mod slice;
+pub mod strings;

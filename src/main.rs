@@ -59,6 +59,8 @@ fn main() {
             commands::cache::get_cache_dir,
             commands::cache::set_cache_dir,
             commands::cache::clear_all_cache,
+            commands::strings::get_strings,
+            commands::strings::get_string_xrefs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
