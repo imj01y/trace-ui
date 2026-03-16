@@ -21,6 +21,7 @@ export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq }: 
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; record: StringRecordDto } | null>(null);
   const [xrefs, setXrefs] = useState<{ record: StringRecordDto; items: StringXRef[] } | null>(null);
+  const [detail, setDetail] = useState<StringRecordDto | null>(null);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -97,6 +98,11 @@ export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq }: 
     setSelectedIdx(record.idx);
     onJumpToSeq(record.seq);
   }, [onJumpToSeq]);
+
+  // ── 双击行弹出详情 ──
+  const handleRowDoubleClick = useCallback((record: StringRecordDto) => {
+    setDetail(record);
+  }, []);
 
   // ── 右键菜单 ──
   const handleContextMenu = useCallback((e: React.MouseEvent, record: StringRecordDto) => {
@@ -205,6 +211,7 @@ export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq }: 
                 data-index={virtualRow.index}
                 ref={virtualizer.measureElement}
                 onClick={() => handleRowClick(record)}
+                onDoubleClick={() => handleRowDoubleClick(record)}
                 onContextMenu={e => handleContextMenu(e, record)}
                 style={{
                   position: "absolute", top: 0, left: 0, width: "100%", height: ROW_HEIGHT,
@@ -317,6 +324,72 @@ export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq }: 
                 <span style={{ color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{xref.disasm}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+      {/* 详情弹窗 */}
+      {detail && (
+        <div style={{
+          position: "fixed", left: "50%", top: "50%", transform: "translate(-50%, -50%)",
+          zIndex: 9999, background: "var(--bg-primary)", border: "1px solid var(--border-color)",
+          borderRadius: 6, boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+          width: 560, maxHeight: "80vh", display: "flex", flexDirection: "column",
+        }}>
+          <div style={{
+            padding: "8px 12px", borderBottom: "1px solid var(--border-color)",
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+          }}>
+            <span style={{ fontSize: 12, color: "var(--text-primary)", fontWeight: 600 }}>String Detail</span>
+            <button
+              onClick={() => setDetail(null)}
+              style={{
+                background: "none", border: "none", color: "var(--text-secondary)",
+                cursor: "pointer", fontSize: 16, padding: "0 4px",
+              }}
+            >×</button>
+          </div>
+          <div style={{ flex: 1, overflow: "auto", padding: 12, fontSize: 12, fontFamily: "var(--font-mono)" }}>
+            {[
+              { label: "Address", value: detail.addr },
+              { label: "Seq", value: String(detail.seq) },
+              { label: "Encoding", value: detail.encoding },
+              { label: "Byte Length", value: String(detail.byte_len) },
+              { label: "XRef Count", value: String(detail.xref_count) },
+            ].map(item => (
+              <div key={item.label} style={{ display: "flex", marginBottom: 8 }}>
+                <span style={{ width: 100, flexShrink: 0, color: "var(--text-secondary)" }}>{item.label}</span>
+                <span style={{ color: "var(--text-primary)" }}>{item.value}</span>
+              </div>
+            ))}
+            <div style={{ marginBottom: 4, color: "var(--text-secondary)" }}>Content</div>
+            <div style={{
+              padding: "8px 10px", background: "var(--bg-secondary)", borderRadius: 4,
+              border: "1px solid var(--border-color)", color: "var(--syntax-string)",
+              whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 300, overflow: "auto",
+              userSelect: "text", lineHeight: 1.5,
+            }}>
+              {detail.content}
+            </div>
+          </div>
+          <div style={{
+            padding: "8px 12px", borderTop: "1px solid var(--border-color)",
+            display: "flex", justifyContent: "flex-end", gap: 8,
+          }}>
+            <button
+              onClick={() => { navigator.clipboard.writeText(detail.content); }}
+              style={{
+                padding: "4px 12px", fontSize: 12, cursor: "pointer",
+                background: "var(--btn-primary)", color: "#fff", border: "none", borderRadius: 3,
+              }}
+            >Copy Content</button>
+            <button
+              onClick={() => setDetail(null)}
+              style={{
+                padding: "4px 12px", fontSize: 12, cursor: "pointer",
+                background: "var(--bg-secondary)", color: "var(--text-primary)",
+                border: "1px solid var(--border-color)", borderRadius: 3,
+              }}
+            >Close</button>
           </div>
         </div>
       )}
