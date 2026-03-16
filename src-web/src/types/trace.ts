@@ -70,3 +70,25 @@ export interface SliceResult {
   totalLines: number;
   percentage: number;
 }
+
+export interface StringRecordDto {
+  idx: number;
+  addr: string;
+  content: string;
+  encoding: string;
+  byte_len: number;
+  seq: number;
+  xref_count: number;
+}
+
+export interface StringsResult {
+  strings: StringRecordDto[];
+  total: number;
+}
+
+export interface StringXRef {
+  seq: number;
+  rw: string;
+  insn_addr: string;
+  disasm: string;
+}
