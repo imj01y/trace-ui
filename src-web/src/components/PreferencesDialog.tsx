@@ -14,7 +14,7 @@ interface CacheInfo {
   size: number;
 }
 
-const TABS = ["General", "Cache"] as const;
+const TABS = ["General", "Analysis", "Cache"] as const;
 type Tab = typeof TABS[number];
 
 function formatSize(bytes: number): string {
@@ -178,6 +178,30 @@ export default function PreferencesDialog({ preferences, onSave, onClose, onClea
                   />
                   Restore previous session on startup
                 </label>
+              </div>
+            )}
+
+            {/* ── Analysis Tab ── */}
+            {tab === "Analysis" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ fontSize: 11, color: "var(--text-secondary)", fontWeight: 600 }}>
+                  Strings
+                </div>
+                <label style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  fontSize: 12, color: "var(--text-primary)", cursor: "pointer",
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={local.scanStringsOnBuild}
+                    onChange={(e) => setLocal(prev => ({ ...prev, scanStringsOnBuild: e.target.checked }))}
+                    style={{ accentColor: "var(--btn-primary)" }}
+                  />
+                  Scan strings during index build
+                </label>
+                <div style={{ fontSize: 10, color: "var(--text-secondary)", lineHeight: 1.4, marginTop: -6 }}>
+                  When disabled, strings are not extracted during startup indexing. You can manually scan from Analysis → Scan Strings.
+                </div>
               </div>
             )}
 

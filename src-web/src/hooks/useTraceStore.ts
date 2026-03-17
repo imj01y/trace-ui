@@ -21,7 +21,7 @@ function loadScrollPos(filePath: string): number | null {
   } catch { return null; }
 }
 
-export function useTraceStore() {
+export function useTraceStore(skipStrings: boolean = false) {
   // Multi-session state
   const [sessions, setSessions] = useState<Map<string, SessionData>>(new Map());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -34,6 +34,7 @@ export function useTraceStore() {
   const [savedScrollSeq, setSavedScrollSeq] = useState<number | null>(null);
   const [indexError, setIndexError] = useState<{ message: string; filePath: string } | null>(null);
   const indexErrorRef = useRef<typeof indexError>(null);
+  const [hasStringIndexMap, setHasStringIndexMap] = useState<Map<string, boolean>>(new Map());
 
   // Search state (top-level, not per-session)
   const [searchResults, setSearchResults] = useState<SearchMatch[]>([]);
@@ -112,7 +113,7 @@ export function useTraceStore() {
 
   // 阶段2：索引构建进度 0-100%
   useEffect(() => {
-    const unlisten = listen<{ sessionId: string; progress: number; done: boolean; error?: string; totalLines?: number }>(
+    const unlisten = listen<{ sessionId: string; progress: number; done: boolean; error?: string; totalLines?: number; hasStringIndex?: boolean }>(
       "index-progress",
       (event) => {
         const { sessionId, progress, done, error, totalLines } = event.payload;
@@ -122,6 +123,9 @@ export function useTraceStore() {
         };
         if (done && totalLines != null) {
           updates.totalLines = totalLines;
+        }
+        if (done && event.payload.hasStringIndex != null) {
+            setHasStringIndexMap(prev => new Map(prev).set(sessionId, event.payload.hasStringIndex!));
         }
         updateSession(sessionId, updates);
         if (sessionId === activeSessionIdRef.current) {
@@ -196,7 +200,7 @@ export function useTraceStore() {
       // 文件加载完成，前端主动启动索引构建
       setLoadingMessage("Loading file... 100%");
       const sid = result.sessionId;
-      invoke("build_index", { sessionId: sid }).catch(async (e) => {
+      invoke("build_index", { sessionId: sid, skipStrings: skipStrings || undefined }).catch(async (e) => {
         // 索引构建失败：关闭 session，标记错误
         setIsLoading(false);
         setLoadingMessage("");
@@ -284,7 +288,7 @@ export function useTraceStore() {
     isRebuildingRef.current = true;
     setIsLoading(true);
     setLoadingMessage("Rebuilding index... 0%");
-    invoke("build_index", { sessionId: sid, force: true }).catch((e) => {
+    invoke("build_index", { sessionId: sid, force: true, skipStrings: skipStrings || undefined }).catch((e) => {
       console.error(e);
       setIsLoading(false);
       setLoadingMessage("");
@@ -360,5 +364,7 @@ export function useTraceStore() {
     cancelLoading,
     indexError,
     clearIndexError: () => setIndexError(null),
+    hasStringIndexMap,
+    setHasStringIndexMap,
   };
 }

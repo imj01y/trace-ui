@@ -53,6 +53,8 @@ const PANEL_WINDOW_TITLES: Record<string, string> = {
 };
 
 function App() {
+  const { preferences, updatePreferences } = usePreferences();
+
   const {
     totalLines,
     isLoaded,
@@ -81,7 +83,9 @@ function App() {
     indexError,
     clearIndexError,
     getSelectedSeqForSession,
-  } = useTraceStore();
+    hasStringIndexMap,
+    setHasStringIndexMap,
+  } = useTraceStore(!preferences.scanStringsOnBuild);
 
   const slice = useSliceState(activeSessionId);
   const [taintDialogSeq, setTaintDialogSeq] = useState<number | null>(null);
@@ -91,7 +95,6 @@ function App() {
   const [showGoto, setShowGoto] = useState(false);
 
   const { recentFiles, addRecent, removeRecent, clearRecent } = useRecentFiles();
-  const { preferences, updatePreferences } = usePreferences();
   const { highlights, loadForFile, setHighlight, toggleStrikethrough, resetHighlight, toggleHidden, unhideGroup, setComment, deleteComment } = useHighlights();
 
   // 文件切换时加载高亮
