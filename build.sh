@@ -195,6 +195,10 @@ create_macos_app() {
 </plist>
 PLIST
 
+    # Ad-hoc 签名（ARM64 macOS 强制要求，否则内核直接 SIGKILL）
+    info "签名 App Bundle (ad-hoc)..."
+    codesign --force --deep --sign - "$app_dir"
+
     ok "App Bundle 创建完成 → $app_dir"
     info "启动方式: open \"$app_dir\""
 }

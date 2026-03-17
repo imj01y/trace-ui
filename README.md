@@ -383,6 +383,16 @@ Vite HMR + Rust 热重载，修改前端代码即时生效。
 
 Windows、macOS、Linux 均支持。macOS 和 Windows 已适配原生窗口控制风格。
 
+**Q: macOS 下载后无法打开，提示"已损坏"或被阻止运行？**
+
+从 GitHub Release 下载的 `.dmg` 文件会被 macOS Gatekeeper 标记隔离属性。由于应用未经 Apple 公证，需要手动移除隔离标记：
+
+```bash
+xattr -cr "/Applications/Trace UI.app"
+```
+
+或者在首次打开时，右键点击 app → 选择"打开" → 确认打开。Apple Silicon (ARM64) 的 Mac 对此限制更严格，建议优先使用 `xattr -cr` 方式。
+
 **Q: 能否支持其他 trace 格式？**
 
 当前支持 unidbg 和 GumTrace 两种格式。如需支持其他格式，欢迎提交 Issue 讨论。
