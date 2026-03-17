@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use serde::Serialize;
 use tauri::{AppHandle, State};
@@ -44,6 +45,7 @@ pub async fn create_session(
             phase2: None,
             scan_state: None,
             slice_result: None,
+            scan_strings_cancelled: Arc::new(AtomicBool::new(false)),
         });
     }
 

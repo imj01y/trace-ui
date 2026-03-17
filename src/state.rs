@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use memmap2::Mmap;
 use serde::{Serialize, Deserialize};
@@ -28,6 +29,7 @@ pub struct SessionState {
     pub phase2: Option<Phase2State>,
     pub scan_state: Option<crate::taint::scanner::ScanState>,
     pub slice_result: Option<bitvec::prelude::BitVec>,
+    pub scan_strings_cancelled: Arc<AtomicBool>,
 }
 
 /// 全局应用状态，支持多 Session（key = session_id）
