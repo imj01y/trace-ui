@@ -185,7 +185,7 @@ pub fn extract_insn_addr(line: &str) -> u64 {
 
 /// 从 "=> " 之后提取寄存器变更并更新状态
 pub fn update_reg_values(values: &mut [u64; RegId::COUNT], line: &str) {
-    if let Some(arrow_pos) = line.find(" => ") {
+    if let Some(arrow_pos) = line.find(" => ").or_else(|| line.find(" -> ")) {
         update_reg_values_at(values, line, arrow_pos);
     }
 }

@@ -84,7 +84,7 @@ pub fn get_registers_at(session_id: String, seq: u32, state: State<'_, AppState>
         }
         if let Ok(line_str) = std::str::from_utf8(raw) {
             let mut changed = Vec::new();
-            if let Some(arrow_pos) = line_str.find(" => ") {
+            if let Some(arrow_pos) = line_str.find(" => ").or_else(|| line_str.find(" -> ")) {
                 let changes = &line_str[arrow_pos + 4..];
                 for part in changes.split_whitespace() {
                     if let Some(eq_pos) = part.find('=') {

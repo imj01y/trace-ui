@@ -270,8 +270,8 @@ fn extract_mem_size(disasm: &str) -> Option<u8> {
 }
 
 fn extract_changes(line: &str) -> String {
-    // "=>" 之后的内容是变更后的寄存器值
-    if let Some(pos) = line.find(" => ") {
+    // "=>" (unidbg) 或 "->" (gumtrace) 之后的内容是变更后的寄存器值
+    if let Some(pos) = line.find(" => ").or_else(|| line.find(" -> ")) {
         line[pos + 4..].trim().to_string()
     } else {
         String::new()
