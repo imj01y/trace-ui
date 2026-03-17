@@ -52,7 +52,14 @@ pub fn parse_trace_line(seq: u32, raw: &[u8]) -> Option<TraceLine> {
 
 /// 解析 gumtrace 格式的 trace 行
 pub fn parse_trace_line_gumtrace(seq: u32, raw: &[u8]) -> Option<TraceLine> {
-    let line = std::str::from_utf8(raw).ok()?;
+    let line_owned: String;
+    let line: &str = match std::str::from_utf8(raw) {
+        Ok(s) => s,
+        Err(_) => {
+            line_owned = crate::taint::bytes_to_hex_escaped(raw);
+            &line_owned
+        }
+    };
 
     // 非指令行（特殊行）返回 None
     if !line.starts_with('[') {

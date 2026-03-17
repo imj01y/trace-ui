@@ -41,6 +41,29 @@ pub struct ScanResult {
     pub consumed_seqs: Vec<u32>,
 }
 
+/// 将字节序列转为字符串：有效 UTF-8 部分正常解码，无效字节显示为 `\xNN` 形式。
+pub(crate) fn bytes_to_hex_escaped(bytes: &[u8]) -> String {
+    let mut result = String::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match std::str::from_utf8(&bytes[i..]) {
+            Ok(s) => {
+                result.push_str(s);
+                break;
+            }
+            Err(e) => {
+                let valid_up_to = e.valid_up_to();
+                // SAFETY: from_utf8 已验证 bytes[i..i+valid_up_to] 是有效 UTF-8
+                result.push_str(unsafe { std::str::from_utf8_unchecked(&bytes[i..i + valid_up_to]) });
+                use std::fmt::Write;
+                let _ = write!(result, "\\x{:02x}", bytes[i + valid_up_to]);
+                i += valid_up_to + 1;
+            }
+        }
+    }
+    result
+}
+
 /// 统一扫描：单次文件遍历同时构建 ScanState（依赖图）、Phase2State（CallTree/MemAccess/RegCheckpoints）
 /// 和 LineIndex（采样行偏移索引）。
 ///
@@ -116,19 +139,13 @@ pub fn scan_unified(
             line_end
         };
 
-        let raw_line = match std::str::from_utf8(&data[pos..end]) {
+        // 非 UTF-8 字节按 Latin-1 映射为对应 Unicode 字符，保留原始可见性
+        let raw_line_owned: String;
+        let raw_line: &str = match std::str::from_utf8(&data[pos..end]) {
             Ok(s) => s,
             Err(_) => {
-                // 非 UTF-8 行（如二进制数据），跳过
-                li_builder.add_line(pos as u64);
-                pos = if line_end < len { line_end + 1 } else { len };
-                state.deps.start_row();
-                state.init_mem_loads.push(false);
-                state.line_count += 1;
-                if state.line_count % CHECKPOINT_INTERVAL == 0 {
-                    reg_ckpts.save_checkpoint(&reg_values);
-                }
-                continue;
+                raw_line_owned = bytes_to_hex_escaped(&data[pos..end]);
+                &raw_line_owned
             }
         };
 
