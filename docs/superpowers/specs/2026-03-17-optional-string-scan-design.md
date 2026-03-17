@@ -69,6 +69,9 @@ pub fn scan_unified(
 ) -> anyhow::Result<(ScanState, Phase2State, crate::line_index::LineIndex)>
 ```
 
+**受影响的调用点：**
+- `commands/index.rs` — `build_index_inner` 中调用 `taint::scan_unified(data, false, false, Some(progress_fn))` 需加入 `skip_strings` 参数
+
 **build_index 命令（commands/index.rs）：**
 
 新增参数 `skip_strings: Option<bool>`，传递给 scan_unified：
@@ -85,6 +88,18 @@ pub async fn build_index(
 
 缓存加载路径不受影响 — 如果缓存中已有非空 string_index，照常加载。
 
+**MemAccessIndex 新增遍历 API（taint/mem_access.rs）：**
+
+当前 `MemAccessIndex.index` 是私有字段，缺少遍历方法。需新增：
+
+```rust
+pub fn iter_all(&self) -> impl Iterator<Item = (u64, &MemAccessRecord)> + '_ {
+    self.index.iter().flat_map(|(&addr, records)| {
+        records.iter().map(move |r| (addr, r))
+    })
+}
+```
+
 ### 4. 后端 — scan_strings 命令
 
 **新增命令 `scan_strings`（commands/strings.rs）：**
@@ -98,14 +113,17 @@ pub async fn scan_strings(
 ```
 
 实现步骤：
-1. 从 SessionState 中读取 Phase2State.mem_accesses（MemAccessIndex），收集所有 `rw == Write && size <= 8` 的记录为 `Vec<(addr, data, size, seq)>`，释放读锁
+1. 从 SessionState 中取读锁，通过 `MemAccessIndex::iter_all()` 收集所有 `rw == Write && size <= 8` 的记录为紧凑元组 `Vec<(u64 /*addr*/, u64 /*data*/, u8 /*size*/, u32 /*seq*/)>`，释放读锁。仅拷贝必要字段，减少内存开销
 2. 按 seq 全局排序（保证与原始 trace 顺序一致）
-3. 创建 StringBuilder，逐条调用 `process_write(addr, data, size, seq)`
-4. 遍历过程中每 N 条检查 AtomicBool 取消标志，触发时提前退出
-5. 调用 `StringBuilder::finish()` 获取 StringIndex（取消时为部分结果）
-6. 调用 `StringBuilder::fill_xref_counts` 填充 xref
-7. 取写锁，将结果写入 `Phase2State.string_index`
-8. 重新保存 Phase2 缓存（`cache::save_cache`）
+3. 重置 `scan_strings_cancelled` AtomicBool 为 false
+4. 创建 StringBuilder，逐条调用 `process_write(addr, data, size, seq)`
+5. 遍历过程中每 10000 条检查 AtomicBool 取消标志，触发时提前退出
+6. **如果被取消**：丢弃结果，不写入 string_index，返回 `Err("cancelled")`
+7. **如果完成**：调用 `StringBuilder::finish()` 获取 StringIndex，调用 `StringBuilder::fill_xref_counts` 填充 xref
+8. 取写锁，将结果写入 `Phase2State.string_index`
+9. 从 SessionState 获取 `file_path` 和 `mmap` 引用，调用 `cache::save_cache` 重新保存 Phase2 缓存
+
+**关于 value=None 的说明**：MemAccessRecord.data 来自 `mem_op.value.unwrap_or(0)`，而 StringBuilder 原本只处理 `value` 为 `Some` 的 WRITE。在当前 trace 格式中，`mem[WRITE]` 行必定包含写入值，`value=None` 不会出现在 WRITE 操作中。因此直接使用 MemAccessRecord.data 是安全的近似。
 
 **新增命令 `cancel_scan_strings`：**
 
@@ -117,7 +135,7 @@ pub async fn cancel_scan_strings(
 ) -> Result<(), String>
 ```
 
-设置对应 session 的 `scan_strings_cancelled: Arc<AtomicBool>` 为 true。
+设置对应 session 的 `scan_strings_cancelled: Arc<AtomicBool>` 为 true。对 session 不存在或扫描已完成的情况静默返回 Ok。
 
 **SessionState 变更（state.rs）：**
 
@@ -150,17 +168,19 @@ pub struct SessionState {
 
 ```typescript
 const [stringsScanningSessionId, setStringsScanningSessionId] = useState<string | null>(null);
-const [hasStringIndex, setHasStringIndex] = useState(false);
+const [hasStringIndexMap, setHasStringIndexMap] = useState<Map<string, boolean>>(new Map());
 ```
 
 - `stringsScanningSessionId`：当前正在扫描字符串的 session ID，null 表示未在扫描
-- `hasStringIndex`：当前 activeSession 是否已有 string_index
+- `hasStringIndexMap`：per-session 的 string_index 状态缓存，切换 session 时直接从 Map 读取，无需查询后端
+
+派生值：`hasStringIndex = hasStringIndexMap.get(activeSessionId) ?? false`
 
 **状态更新时机：**
-- `index-progress` done 事件 → 更新 `hasStringIndex`
-- `scan_strings` 开始 → 设置 `stringsScanningSessionId`
-- `scan_strings` 完成/取消 → 清除 `stringsScanningSessionId`，设置 `hasStringIndex = true`
-- 切换 activeSession → 查询新 session 的 hasStringIndex
+- `index-progress` done 事件 → 更新 `hasStringIndexMap` 对应 sessionId
+- `scan_strings` 完成 → 更新 `hasStringIndexMap` 对应 sessionId 为 true
+- `scan_strings` 取消 → 不更新 hasStringIndexMap（保持原状态）
+- 切换 activeSession → 从 hasStringIndexMap 读取，无需额外查询
 
 **scanStrings 函数：**
 
@@ -169,7 +189,10 @@ const scanStrings = async () => {
   setStringsScanningSessionId(activeSessionId);
   try {
     await invoke("scan_strings", { sessionId: activeSessionId });
-    setHasStringIndex(true);
+    setHasStringIndexMap(prev => new Map(prev).set(activeSessionId, true));
+  } catch (e) {
+    // 取消或错误时不更新 hasStringIndexMap
+    console.warn("scan_strings:", e);
   } finally {
     setStringsScanningSessionId(null);
   }
