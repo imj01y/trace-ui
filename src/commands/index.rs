@@ -10,14 +10,21 @@ pub async fn build_index(
     app: AppHandle,
     state: State<'_, AppState>,
     force: Option<bool>,
+    skip_strings: Option<bool>,
 ) -> Result<(), String> {
-    let result = build_index_inner(&session_id, &app, &state, force.unwrap_or(false)).await;
+    let result = build_index_inner(&session_id, &app, &state, force.unwrap_or(false), skip_strings.unwrap_or(false)).await;
 
     // 无论成功或失败，都发送 done 事件，防止前端永远卡在 loading
-    let error = result.as_ref().err().cloned();
-    let total_lines = {
+    let (error, total_lines, has_string_index) = {
         let sessions = state.sessions.read().map_err(|e| e.to_string())?;
-        sessions.get(&*session_id).map(|s| s.total_lines).unwrap_or(0)
+        let s = sessions.get(&*session_id);
+        (
+            result.as_ref().err().cloned(),
+            s.map(|s| s.total_lines).unwrap_or(0),
+            s.and_then(|s| s.phase2.as_ref())
+                .map(|p| !p.string_index.strings.is_empty())
+                .unwrap_or(false),
+        )
     };
     let _ = app.emit("index-progress", serde_json::json!({
         "sessionId": session_id,
@@ -25,6 +32,7 @@ pub async fn build_index(
         "done": true,
         "error": error,
         "totalLines": total_lines,
+        "hasStringIndex": has_string_index,
     }));
 
     result
@@ -35,6 +43,7 @@ async fn build_index_inner(
     app: &AppHandle,
     state: &State<'_, AppState>,
     force: bool,
+    skip_strings: bool,
 ) -> Result<(), String> {
     let (mmap_arc, file_path) = {
         let sessions = state.sessions.read().map_err(|e| e.to_string())?;
@@ -102,7 +111,7 @@ async fn build_index_inner(
             "progress": 0.0,
             "done": false,
         }));
-        let (mut scan_state, phase2, line_index) = taint::scan_unified(data, false, false, Some(progress_fn))
+        let (mut scan_state, phase2, line_index) = taint::scan_unified(data, false, false, skip_strings, Some(progress_fn))
             .map_err(|e| format!("统一扫描失败: {}", e))?;
 
         // 格式检查：如果没有任何行被成功解析，说明不是有效的 trace 文件
