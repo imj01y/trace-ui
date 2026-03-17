@@ -140,7 +140,7 @@ pub fn extract_blr_target(parsed: &crate::taint::types::ParsedLine, line_str: &s
     if let Some(Operand::Reg(reg)) = parsed.operands.first() {
         // 在 "=>" 之前的部分查找 "xN=0x..." 格式
         let reg_name = format!("{:?}", reg); // "x6", "x30" 等
-        let search_area = if let Some(arrow_pos) = line_str.find(" => ") {
+        let search_area = if let Some(arrow_pos) = line_str.find(" => ").or_else(|| line_str.find(" -> ")) {
             &line_str[..arrow_pos]
         } else {
             line_str
@@ -163,9 +163,17 @@ pub fn extract_blr_target(parsed: &crate::taint::types::ParsedLine, line_str: &s
 
 /// 从 trace 行提取指令绝对地址
 pub fn extract_insn_addr(line: &str) -> u64 {
-    // 格式: ... ] 0xADDR: "mnemonic ..."
+    // 格式: ... ] 0xADDR: "mnemonic ..." (unidbg)
+    //   或: ... ] 0xADDR!0xOFFSET ... (gumtrace)
     if let Some(pos) = line.find("] 0x") {
         let rest = &line[pos + 4..]; // 跳过 "] 0x"
+        // gumtrace: 0xADDR!0xOFFSET
+        if let Some(bang) = rest.find('!') {
+            if let Ok(addr) = u64::from_str_radix(&rest[..bang], 16) {
+                return addr;
+            }
+        }
+        // unidbg: 0xADDR:
         if let Some(colon) = rest.find(':') {
             if let Ok(addr) = u64::from_str_radix(&rest[..colon], 16) {
                 return addr;

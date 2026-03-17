@@ -31,6 +31,16 @@ pub type ProgressFn = Box<dyn Fn(usize, usize) + Send>;
 
 const CHECKPOINT_INTERVAL: u32 = 1000;
 
+/// scan_unified 的返回结果
+pub struct ScanResult {
+    pub scan_state: ScanState,
+    pub phase2: Phase2State,
+    pub line_index: crate::line_index::LineIndex,
+    pub format: types::TraceFormat,
+    pub call_annotations: std::collections::HashMap<u32, gumtrace_parser::CallAnnotation>,
+    pub consumed_seqs: Vec<u32>,
+}
+
 /// 统一扫描：单次文件遍历同时构建 ScanState（依赖图）、Phase2State（CallTree/MemAccess/RegCheckpoints）
 /// 和 LineIndex（采样行偏移索引）。
 ///
@@ -42,7 +52,10 @@ pub fn scan_unified(
     no_prune: bool,
     skip_strings: bool,
     progress_fn: Option<ProgressFn>,
-) -> anyhow::Result<(ScanState, Phase2State, crate::line_index::LineIndex)> {
+) -> anyhow::Result<ScanResult> {
+    // ── 格式检测 ──
+    let format = gumtrace_parser::detect_format(data);
+
     // ── ScanState 初始化（来自 scanner.rs） ──
     // 用文件大小估算行数（平均每行 ~110 字节），避免预扫描整个文件
     let line_count_est = data.len() / 110 + 1;
@@ -70,6 +83,12 @@ pub fn scan_unified(
 
     // 保存初始检查点
     reg_ckpts.save_checkpoint(&reg_values);
+
+    // ── Gumtrace 状态变量 ──
+    let mut call_annotations: std::collections::HashMap<u32, gumtrace_parser::CallAnnotation> = std::collections::HashMap::new();
+    let mut consumed_seqs: Vec<u32> = Vec::new();
+    let mut pending_call_seq: Option<u32> = None;
+    let mut current_annotation: Option<(u32, gumtrace_parser::CallAnnotation)> = None;
 
     // BLR 后需要检测：如果下一行地址 = BLR的PC+4，说明是 unidbg 拦截调用（无函数体）
     let mut blr_pending_pc: Option<u64> = None;
@@ -105,6 +124,68 @@ pub fn scan_unified(
 
         pos = if line_end < len { line_end + 1 } else { len };
 
+        // ── Gumtrace special line early interception (before deps.start_row) ──
+        if format == types::TraceFormat::Gumtrace && gumtrace_parser::is_special_line(raw_line) {
+            let i = state.line_count;
+            // Special lines still occupy a row in deps (keep indices aligned)
+            state.deps.start_row();
+            state.init_mem_loads.push(false);
+
+            if let Some(special) = gumtrace_parser::parse_special_line(raw_line) {
+                consumed_seqs.push(i);
+                match special {
+                    gumtrace_parser::SpecialLine::CallFunc { name, is_jni, .. } => {
+                        // Flush previous unfinished annotation
+                        if let Some((bl_seq, ann)) = current_annotation.take() {
+                            ct_builder.set_func_name_by_entry_seq(bl_seq, &ann.func_name);
+                            call_annotations.insert(bl_seq, ann);
+                        }
+                        if let Some(bl_seq) = pending_call_seq.take() {
+                            current_annotation = Some((bl_seq, gumtrace_parser::CallAnnotation {
+                                func_name: name.to_string(),
+                                is_jni,
+                                args: Vec::new(),
+                                ret_value: None,
+                                raw_lines: vec![raw_line.to_string()],
+                            }));
+                        }
+                    }
+                    gumtrace_parser::SpecialLine::Arg { index, value } => {
+                        if let Some((_, ref mut ann)) = current_annotation {
+                            ann.args.push((index.to_string(), value.to_string()));
+                            ann.raw_lines.push(raw_line.to_string());
+                        }
+                    }
+                    gumtrace_parser::SpecialLine::Ret { value } => {
+                        if let Some((bl_seq, mut ann)) = current_annotation.take() {
+                            ann.ret_value = Some(value.to_string());
+                            ann.raw_lines.push(raw_line.to_string());
+                            ct_builder.set_func_name_by_entry_seq(bl_seq, &ann.func_name);
+                            call_annotations.insert(bl_seq, ann);
+                        }
+                    }
+                    gumtrace_parser::SpecialLine::HexDump(_) => {
+                        // consumed_seqs already pushed above
+                        if let Some((_, ref mut ann)) = current_annotation {
+                            ann.raw_lines.push(raw_line.to_string());
+                        }
+                    }
+                }
+            }
+
+            state.line_count += 1;
+            if state.line_count % CHECKPOINT_INTERVAL == 0 {
+                reg_ckpts.save_checkpoint(&reg_values);
+            }
+            if let Some(ref cb) = progress_fn {
+                if pos - last_report >= progress_interval {
+                    cb(pos, len);
+                    last_report = pos;
+                }
+            }
+            continue;
+        }
+
         let i = state.line_count;
         state.deps.start_row();
         state.init_mem_loads.push(false);
@@ -126,7 +207,11 @@ pub fn scan_unified(
         }
 
         // Parse; unparseable lines get an empty dep set
-        let Some(line) = parser::parse_line(raw_line) else {
+        let parsed = match format {
+            types::TraceFormat::Unidbg => parser::parse_line(raw_line),
+            types::TraceFormat::Gumtrace => gumtrace_parser::parse_line_gumtrace(raw_line),
+        };
+        let Some(line) = parsed else {
             state.line_count += 1;
             // Checkpoint 保存
             if state.line_count % CHECKPOINT_INTERVAL == 0 {
@@ -368,6 +453,9 @@ pub fn scan_unified(
                     })
                     .unwrap_or(0);
                 ct_builder.on_call(i, target);
+                if format == types::TraceFormat::Gumtrace {
+                    pending_call_seq = Some(i);
+                }
             }
             InsnClass::BranchLinkReg => {
                 // BLR: 记录 PC 地址，下一行判断是否为 unidbg 拦截调用
@@ -375,6 +463,9 @@ pub fn scan_unified(
                 let blr_pc = phase2::extract_insn_addr(raw_line);
                 ct_builder.on_call(i, target);
                 blr_pending_pc = Some(blr_pc);
+                if format == types::TraceFormat::Gumtrace {
+                    pending_call_seq = Some(i);
+                }
             }
             InsnClass::Return => {
                 ct_builder.on_ret(i);
@@ -435,6 +526,12 @@ pub fn scan_unified(
     }
 
     // ── 结束 ──
+    // Flush any unfinished CallAnnotation (log truncated or function doesn't return)
+    if let Some((bl_seq, ann)) = current_annotation.take() {
+        ct_builder.set_func_name_by_entry_seq(bl_seq, &ann.func_name);
+        call_annotations.insert(bl_seq, ann);
+    }
+
     let call_tree = ct_builder.finish(state.line_count);
     let string_index = match string_builder {
         Some(sb) => {
@@ -452,5 +549,12 @@ pub fn scan_unified(
     };
     let line_index = li_builder.finish();
 
-    Ok((state, phase2_state, line_index))
+    Ok(ScanResult {
+        scan_state: state,
+        phase2: phase2_state,
+        line_index,
+        format,
+        call_annotations,
+        consumed_seqs,
+    })
 }

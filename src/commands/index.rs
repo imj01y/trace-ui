@@ -86,7 +86,14 @@ async fn build_index_inner(
                 if let Some(cached_scan) = cache::load_scan_cache(&file_path, data) {
                     // 双缓存命中，加载或构建 LineIndex
                     let line_index = load_or_build_line_index(&file_path, data);
-                    return Ok((cached_scan, cached_phase2, line_index));
+                    return Ok(taint::ScanResult {
+                        scan_state: cached_scan,
+                        phase2: cached_phase2,
+                        line_index,
+                        format: crate::taint::types::TraceFormat::Unidbg,
+                        call_annotations: std::collections::HashMap::new(),
+                        consumed_seqs: Vec::new(),
+                    });
                 }
                 // 仅 Phase2 命中，需要重建 ScanState — 发送初始进度
                 let _ = app_for_init.emit("index-progress", serde_json::json!({
@@ -101,7 +108,14 @@ async fn build_index_inner(
                 scan_state.compact();
                 cache::save_scan_cache(&file_path, data, &scan_state);
                 let line_index = load_or_build_line_index(&file_path, data);
-                return Ok((scan_state, cached_phase2, line_index));
+                return Ok(taint::ScanResult {
+                    scan_state,
+                    phase2: cached_phase2,
+                    line_index,
+                    format: crate::taint::types::TraceFormat::Unidbg,
+                    call_annotations: std::collections::HashMap::new(),
+                    consumed_seqs: Vec::new(),
+                });
             }
         }
 
@@ -111,16 +125,19 @@ async fn build_index_inner(
             "progress": 0.0,
             "done": false,
         }));
-        let (mut scan_state, phase2, line_index) = taint::scan_unified(data, false, false, skip_strings, Some(progress_fn))
+        let mut scan_result = taint::scan_unified(data, false, false, skip_strings, Some(progress_fn))
             .map_err(|e| format!("统一扫描失败: {}", e))?;
 
         // 格式检查：如果没有任何行被成功解析，说明不是有效的 trace 文件
-        if scan_state.parsed_count == 0 && scan_state.line_count > 0 {
+        if scan_result.scan_state.parsed_count == 0 && scan_result.scan_state.line_count > 0 {
             return Err("文件格式不正确：未检测到有效的 ARM64 trace 指令行".to_string());
         }
 
-        // 格式检查：有指令行但没有内存操作注解，说明缺少定制的 mem[WRITE]/mem[READ] + abs= 字段
-        if scan_state.parsed_count > 0 && scan_state.mem_op_count == 0 {
+        // 格式检查：有指令行但没有内存操作注解（仅 unidbg 格式需要检查）
+        if scan_result.scan_state.parsed_count > 0
+            && scan_result.scan_state.mem_op_count == 0
+            && scan_result.format == crate::taint::types::TraceFormat::Unidbg
+        {
             return Err(
                 "Trace 日志缺少内存访问注解（mem[WRITE]/mem[READ] 和 abs= 字段）。\n\n\
                  trace-ui 需要定制化的 unidbg 日志格式，标准 unidbg 输出不包含这些字段。\n\
@@ -130,25 +147,28 @@ async fn build_index_inner(
         }
 
         // 压缩 + 保存缓存
-        scan_state.compact();
-        cache::save_cache(&file_path, data, &phase2);
-        cache::save_scan_cache(&file_path, data, &scan_state);
-        cache::save_line_index_cache(&file_path, data, &line_index);
+        scan_result.scan_state.compact();
+        cache::save_cache(&file_path, data, &scan_result.phase2);
+        cache::save_scan_cache(&file_path, data, &scan_result.scan_state);
+        cache::save_line_index_cache(&file_path, data, &scan_result.line_index);
 
-        Ok::<_, String>((scan_state, phase2, line_index))
+        Ok::<_, String>(scan_result)
     })
     .await
     .map_err(|e| format!("扫描线程 panic: {}", e))??;
 
     // 写入结果
     {
-        let (scan_state, phase2, line_index) = result;
+        let scan_result = result;
         let mut sessions = state.sessions.write().map_err(|e| e.to_string())?;
         if let Some(session) = sessions.get_mut(session_id) {
-            session.total_lines = line_index.total_lines();
-            session.scan_state = Some(scan_state);
-            session.phase2 = Some(phase2);
-            session.line_index = Some(line_index);
+            session.total_lines = scan_result.line_index.total_lines();
+            session.trace_format = scan_result.format;
+            session.call_annotations = scan_result.call_annotations;
+            session.consumed_seqs = scan_result.consumed_seqs;
+            session.scan_state = Some(scan_result.scan_state);
+            session.phase2 = Some(scan_result.phase2);
+            session.line_index = Some(scan_result.line_index);
         }
     }
 

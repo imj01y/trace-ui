@@ -4,6 +4,8 @@ use serde::{Serialize, Deserialize};
 pub struct CallTreeNode {
     pub id: u32,
     pub func_addr: u64,
+    #[serde(default)]
+    pub func_name: Option<String>,
     pub entry_seq: u32,
     pub exit_seq: u32,
     pub parent_id: Option<u32>,
@@ -27,6 +29,7 @@ impl CallTreeBuilder {
         let root = CallTreeNode {
             id: 0,
             func_addr: 0,
+            func_name: None,
             entry_seq: 0,
             exit_seq: u32::MAX,
             parent_id: None,
@@ -46,6 +49,7 @@ impl CallTreeBuilder {
         let child = CallTreeNode {
             id: child_id,
             func_addr: target_addr,
+            func_name: None,
             entry_seq: seq,
             exit_seq: u32::MAX,
             parent_id: Some(self.current_id),
@@ -55,6 +59,16 @@ impl CallTreeBuilder {
         self.nodes[self.current_id as usize].children_ids.push(child_id);
         self.call_stack.push(self.current_id);
         self.current_id = child_id;
+    }
+
+    /// 根据 entry_seq 查找节点并设置 func_name
+    pub fn set_func_name_by_entry_seq(&mut self, entry_seq: u32, name: &str) {
+        for node in self.nodes.iter_mut().rev() {
+            if node.entry_seq == entry_seq {
+                node.func_name = Some(name.to_string());
+                return;
+            }
+        }
     }
 
     /// 更新当前节点的 func_addr（用于 BLR 后从下一行获取实际目标地址）
