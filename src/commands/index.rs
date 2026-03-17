@@ -79,8 +79,13 @@ async fn build_index_inner(
             li
         };
 
+        // 检测格式（在缓存逻辑之前，确保后续路径都使用正确的格式）
+        let detected_format = taint::gumtrace_parser::detect_format(data);
+
         // 尝试从缓存加载
-        if !force {
+        // 注意：gumtrace 格式的 call_annotations/consumed_seqs 不在缓存中，
+        // 需要强制全量扫描以构建这些数据
+        if !force && detected_format == crate::taint::types::TraceFormat::Unidbg {
             if let Some(cached_phase2) = cache::load_cache(&file_path, data) {
                 // Phase2 命中，尝试加载 ScanState 缓存
                 if let Some(cached_scan) = cache::load_scan_cache(&file_path, data) {
@@ -90,7 +95,7 @@ async fn build_index_inner(
                         scan_state: cached_scan,
                         phase2: cached_phase2,
                         line_index,
-                        format: crate::taint::types::TraceFormat::Unidbg,
+                        format: detected_format,
                         call_annotations: std::collections::HashMap::new(),
                         consumed_seqs: Vec::new(),
                     });
@@ -112,7 +117,7 @@ async fn build_index_inner(
                     scan_state,
                     phase2: cached_phase2,
                     line_index,
-                    format: crate::taint::types::TraceFormat::Unidbg,
+                    format: detected_format,
                     call_annotations: std::collections::HashMap::new(),
                     consumed_seqs: Vec::new(),
                 });
