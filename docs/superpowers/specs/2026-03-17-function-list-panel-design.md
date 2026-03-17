@@ -18,7 +18,9 @@
 
 ### 新增 Tauri 命令 `get_function_calls`
 
-**位置**：`src/commands/browse.rs`（或新建 `src/commands/functions.rs`）
+**位置**：新建 `src/commands/functions.rs`（需在 `src/commands/mod.rs` 增加 `pub mod functions;`，在 `src/main.rs` 的 `generate_handler!` 宏中注册命令）
+
+**格式限制**：此功能仅对 **gumtrace 格式**的 trace 文件有效。Unidbg 格式的 `call_annotations` 始终为空，前端需优雅降级（显示空状态提示或隐藏 Tab）。
 
 **数据源**：`SessionState.call_annotations: HashMap<u32, CallAnnotation>`
 
@@ -28,7 +30,7 @@
 #[derive(serde::Serialize)]
 pub struct FunctionCallOccurrence {
     pub seq: u32,
-    pub summary: String,
+    pub summary: String,  // 来自 CallAnnotation::summary()，含函数名前缀，前端展示子项时需截取避免重复
 }
 
 #[derive(serde::Serialize)]
@@ -41,7 +43,7 @@ pub struct FunctionCallEntry {
 #[derive(serde::Serialize)]
 pub struct FunctionCallsResult {
     pub functions: Vec<FunctionCallEntry>,
-    pub total_calls: u32,
+    pub total_calls: usize,
 }
 ```
 
@@ -56,7 +58,7 @@ pub struct FunctionCallsResult {
 
 ```rust
 #[tauri::command]
-pub async fn get_function_calls(
+pub fn get_function_calls(
     session_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<FunctionCallsResult, String>
@@ -114,6 +116,7 @@ export interface FunctionCallsResult {
 interface Props {
   sessionId: string | null;
   onJumpToSeq: (seq: number) => void;
+  isGumtraceFormat: boolean;  // 控制是否显示内容，Unidbg 格式下显示空状态
 }
 ```
 
@@ -142,9 +145,10 @@ interface Props {
 
 **位置**：`src-web/src/App.tsx`
 
-在 FunctionTree 所在的 `<Panel>` 内部加 Tab 容器：
+在左侧面板内部垂直分组的**上半区 Panel**（`App.tsx:941` 的 `<Panel defaultSize={65} minSize={20}>`，即 FunctionTree 所在位置）内部加 Tab 容器：
 
 ```tsx
+{/* 这是左侧面板内部上半区的 Panel，不是最外层的左侧 Panel */}
 <Panel defaultSize={65} minSize={20}>
   <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
     <div className="left-tab-bar">
