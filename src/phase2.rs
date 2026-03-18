@@ -321,9 +321,22 @@ pub fn update_reg_values_at(values: &mut [u64; RegId::COUNT], line: &str, arrow_
             let reg_name = &part[..eq_pos];
             let val_str = &part[eq_pos + 1..];
             if let Some(reg) = parse_reg(reg_name) {
-                let val_str = val_str.trim_start_matches("0x");
-                if let Ok(val) = u64::from_str_radix(val_str, 16) {
-                    values[reg.0 as usize] = val;
+                let hex_str = val_str.trim_start_matches("0x");
+                if reg.is_simd_lo() {
+                    // SIMD lo 寄存器：优先尝试 u128 解析以获取完整 128-bit 值
+                    if let Ok(val128) = u128::from_str_radix(hex_str, 16) {
+                        values[reg.0 as usize] = val128 as u64; // lo 64 bits
+                        if let Some(hi) = reg.simd_hi() {
+                            values[hi.0 as usize] = (val128 >> 64) as u64; // hi 64 bits
+                        }
+                    } else if let Ok(val64) = u64::from_str_radix(hex_str, 16) {
+                        values[reg.0 as usize] = val64;
+                    }
+                } else {
+                    // 非 SIMD：使用原有 u64 解析路径
+                    if let Ok(val) = u64::from_str_radix(hex_str, 16) {
+                        values[reg.0 as usize] = val;
+                    }
                 }
             }
         }
