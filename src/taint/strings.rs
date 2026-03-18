@@ -263,13 +263,22 @@ impl StringBuilder {
 
     pub fn fill_xref_counts(index: &mut StringIndex, mem_idx: &crate::taint::mem_access::MemAccessIndex) {
         use crate::taint::mem_access::MemRw;
+        use rustc_hash::FxHashMap;
+
+        // 预计算每个地址的 Read 次数（一次遍历所有记录，O(N)）
+        // 避免对每个字符串的每个字节重复遍历热门地址的数百万条记录
+        let mut read_counts: FxHashMap<u64, u32> = FxHashMap::default();
+        for (addr, records) in mem_idx.iter_all() {
+            if records.rw == MemRw::Read {
+                *read_counts.entry(addr).or_insert(0) += 1;
+            }
+        }
+
+        // 查表：O(1) per byte
         for record in &mut index.strings {
             let mut count = 0u32;
             for offset in 0..record.byte_len as u64 {
-                let addr = record.addr + offset;
-                if let Some(records) = mem_idx.get(addr) {
-                    count += records.iter().filter(|r| r.rw == MemRw::Read).count() as u32;
-                }
+                count += read_counts.get(&(record.addr + offset)).copied().unwrap_or(0);
             }
             record.xref_count = count;
         }
