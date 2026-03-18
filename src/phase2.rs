@@ -101,16 +101,57 @@ pub fn build_phase2(data: &[u8], progress_fn: Option<Box<dyn Fn(usize, usize) + 
                         MemRw::Read
                     };
                     let insn_addr = extract_insn_addr(line_str);
-                    mem_idx.add(
-                        mem_op.abs,
-                        MemAccessRecord {
-                            seq,
-                            insn_addr,
-                            rw,
-                            data: mem_op.value.unwrap_or(0),
-                            size: mem_op.elem_width,
-                        },
-                    );
+
+                    if mem_op.elem_width <= 8 {
+                        // Scalar 路径
+                        mem_idx.add(
+                            mem_op.abs,
+                            MemAccessRecord {
+                                seq,
+                                insn_addr,
+                                rw,
+                                data: mem_op.value.unwrap_or(0),
+                                size: mem_op.elem_width,
+                            },
+                        );
+
+                        // Pair 指令：在 abs + elem_width 处创建第二条记录
+                        if let Some(val2) = mem_op.value2 {
+                            mem_idx.add(
+                                mem_op.abs + mem_op.elem_width as u64,
+                                MemAccessRecord {
+                                    seq,
+                                    insn_addr,
+                                    rw,
+                                    data: val2,
+                                    size: mem_op.elem_width,
+                                },
+                            );
+                        }
+                    } else if mem_op.elem_width == 16 {
+                        // 128-bit: 拆为两条 size=8 的记录
+                        if let Some(lo) = mem_op.value_lo {
+                            mem_idx.add(mem_op.abs, MemAccessRecord {
+                                seq, insn_addr, rw, data: lo, size: 8,
+                            });
+                        }
+                        if let Some(hi) = mem_op.value_hi {
+                            mem_idx.add(mem_op.abs + 8, MemAccessRecord {
+                                seq, insn_addr, rw, data: hi, size: 8,
+                            });
+                        }
+                        // Pair 128-bit: 第二个寄存器
+                        if let Some(lo2) = mem_op.value2_lo {
+                            mem_idx.add(mem_op.abs + 16, MemAccessRecord {
+                                seq, insn_addr, rw, data: lo2, size: 8,
+                            });
+                        }
+                        if let Some(hi2) = mem_op.value2_hi {
+                            mem_idx.add(mem_op.abs + 24, MemAccessRecord {
+                                seq, insn_addr, rw, data: hi2, size: 8,
+                            });
+                        }
+                    }
                 }
 
                 // RegCheckpoints: 从 "=>" 之后提取寄存器变更值

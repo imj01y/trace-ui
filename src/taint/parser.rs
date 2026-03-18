@@ -34,6 +34,24 @@ pub(crate) fn parse_hex_u64(bytes: &[u8]) -> Option<u64> {
     Some(result)
 }
 
+/// 手动解析十六进制字节序列到 u128（用于 128-bit SIMD q 寄存器值）。
+pub(crate) fn parse_hex_u128(bytes: &[u8]) -> Option<u128> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let mut val: u128 = 0;
+    for &b in bytes {
+        let digit = match b {
+            b'0'..=b'9' => (b - b'0') as u128,
+            b'a'..=b'f' => (b - b'a' + 10) as u128,
+            b'A'..=b'F' => (b - b'A' + 10) as u128,
+            _ => return None,
+        };
+        val = val.checked_mul(16)?.checked_add(digit)?;
+    }
+    Some(val)
+}
+
 /// 从 `line[from..]` 中提取 mem[READ/WRITE] abs=0xADDR。
 /// `from` 允许调用者跳过行首已扫描的部分，避免重复搜索。
 fn find_mem_op_raw(line: &[u8], from: usize) -> Option<(bool, u64)> {
@@ -111,8 +129,8 @@ fn parse_line_inner(raw: &str, extract_regs: bool) -> Option<ParsedLine> {
     let mem_op = find_mem_op_raw(bytes, q2).map(|(is_write, abs)| {
         let elem_width = determine_elem_width(mnemonic, raw_first_reg_prefix);
         // 5b. Extract value for pass-through pruning
-        let value = if elem_width <= 8 {
-            first_data_reg_name(operand_text).and_then(|reg_name| {
+        let (value, value_lo, value_hi) = if elem_width <= 8 {
+            let v = first_data_reg_name(operand_text).and_then(|reg_name| {
                 let search_start = if is_write {
                     q2 // STORE: search from after quotes
                 } else {
@@ -129,15 +147,77 @@ fn parse_line_inner(raw: &str, extract_regs: bool) -> Option<ParsedLine> {
                     (1u64 << (elem_width as u32 * 8)) - 1
                 };
                 Some(raw_val & mask)
-            })
+            });
+            (v, None, None)
+        } else if elem_width == 16 {
+            // 128-bit SIMD: 用 u128 解析后拆为 low/high 两个 u64
+            let v128 = first_data_reg_name(operand_text).and_then(|reg_name| {
+                let search_start = if is_write {
+                    q2
+                } else {
+                    match arrow_rel {
+                        Some(rel) => q2 + rel + 4,
+                        None => return None,
+                    }
+                };
+                find_reg_value_u128(bytes, reg_name.as_bytes(), search_start)
+            });
+            match v128 {
+                Some(val) => (None, Some(val as u64), Some((val >> 64) as u64)),
+                None => (None, None, None),
+            }
         } else {
-            None // SIMD 128-bit: skip
+            (None, None, None)
+        };
+        // Pair 指令：提取第二个寄存器的值
+        let (value2, value2_lo, value2_hi) = if is_pair_mnemonic(mnemonic) {
+            if elem_width <= 8 {
+                let v2 = second_data_reg_name(operand_text).and_then(|reg_name| {
+                    let search_start = if is_write {
+                        q2
+                    } else {
+                        match arrow_rel {
+                            Some(rel) => q2 + rel + 4,
+                            None => return None,
+                        }
+                    };
+                    let raw_val = find_reg_value(bytes, reg_name.as_bytes(), search_start)?;
+                    let mask = if elem_width >= 8 { u64::MAX } else { (1u64 << (elem_width as u32 * 8)) - 1 };
+                    Some(raw_val & mask)
+                });
+                (v2, None, None)
+            } else if elem_width == 16 {
+                let v128 = second_data_reg_name(operand_text).and_then(|reg_name| {
+                    let search_start = if is_write {
+                        q2
+                    } else {
+                        match arrow_rel {
+                            Some(rel) => q2 + rel + 4,
+                            None => return None,
+                        }
+                    };
+                    find_reg_value_u128(bytes, reg_name.as_bytes(), search_start)
+                });
+                match v128 {
+                    Some(val) => (None, Some(val as u64), Some((val >> 64) as u64)),
+                    None => (None, None, None),
+                }
+            } else {
+                (None, None, None)
+            }
+        } else {
+            (None, None, None)
         };
         MemOp {
             is_write,
             abs,
             elem_width,
             value,
+            value2,
+            value_lo,
+            value_hi,
+            value2_lo,
+            value2_hi,
         }
     });
 
@@ -369,11 +449,37 @@ pub(crate) fn first_data_reg_name(operand_text: &str) -> Option<&str> {
     }
 }
 
-/// Find `reg_name=0xHEX` in `bytes[start_pos..]`, return parsed hex value.
+/// 提取操作数中第二个数据寄存器名（用于 pair 指令如 ldp/stp）。
+pub(crate) fn second_data_reg_name(operand_text: &str) -> Option<&str> {
+    let mut iter = operand_text.split(',');
+    iter.next()?; // 跳过第一个
+    let second_tok = iter.next()?.trim();
+    let second_tok = second_tok.trim_start_matches('{').trim_end_matches('}').trim();
+    let second_tok = second_tok.split('.').next()?;
+    let b = second_tok.as_bytes();
+    if b.len() >= 2
+        && matches!(b[0], b'w' | b'x' | b'q' | b'd' | b's' | b'b' | b'h' | b'v')
+        && b[1..].iter().all(|c| c.is_ascii_digit())
+    {
+        Some(second_tok)
+    } else {
+        None
+    }
+}
+
+/// 判断助记符是否为 pair 类指令（ldp/stp 及其变体）。
+pub(crate) fn is_pair_mnemonic(mn: &str) -> bool {
+    mn.starts_with("ldp") || mn.starts_with("stp")
+        || mn.starts_with("ldnp") || mn.starts_with("stnp")
+        || mn.starts_with("ldxp") || mn.starts_with("ldaxp")
+        || mn.starts_with("stxp") || mn.starts_with("stlxp")
+}
+
+/// 从 `bytes[start_pos..]` 中查找 `reg_name=0xHEX` 模式，返回 HEX 部分的原始字节切片。
 ///
-/// Ensures exact register name match (no prefix collisions like "x1" matching "x10")
-/// by checking the character before the name is not alphanumeric and "=0x" follows immediately.
-pub(crate) fn find_reg_value(bytes: &[u8], reg_name: &[u8], start_pos: usize) -> Option<u64> {
+/// 确保寄存器名精确匹配（不会出现 "x1" 匹配到 "x10" 的前缀冲突），
+/// 通过检查名字前一个字符不是字母数字、且名字后紧跟 "=0x"。
+fn find_reg_hex_bytes<'a>(bytes: &'a [u8], reg_name: &[u8], start_pos: usize) -> Option<&'a [u8]> {
     let search = &bytes[start_pos..];
     let mut pos = 0;
     while pos + reg_name.len() + 3 <= search.len() {
@@ -399,12 +505,27 @@ pub(crate) fn find_reg_value(bytes: &[u8], reg_name: &[u8], start_pos: usize) ->
                     .position(|b| !b.is_ascii_hexdigit())
                     .map(|p| val_start + p)
                     .unwrap_or(search.len());
-                return parse_hex_u64(&search[val_start..val_end]);
+                return Some(&search[val_start..val_end]);
             }
         }
         pos = abs + 1;
     }
     None
+}
+
+/// Find `reg_name=0xHEX` in `bytes[start_pos..]`, return parsed hex value as u64.
+///
+/// Ensures exact register name match (no prefix collisions like "x1" matching "x10")
+/// by checking the character before the name is not alphanumeric and "=0x" follows immediately.
+pub(crate) fn find_reg_value(bytes: &[u8], reg_name: &[u8], start_pos: usize) -> Option<u64> {
+    parse_hex_u64(find_reg_hex_bytes(bytes, reg_name, start_pos)?)
+}
+
+/// Find `reg_name=0xHEX` in `bytes[start_pos..]`, return parsed hex value as u128.
+///
+/// 用于 128-bit SIMD q 寄存器值的提取。
+pub(crate) fn find_reg_value_u128(bytes: &[u8], reg_name: &[u8], start_pos: usize) -> Option<u128> {
+    parse_hex_u128(find_reg_hex_bytes(bytes, reg_name, start_pos)?)
 }
 
 /// Infer memory access width from mnemonic and the first operand's raw register prefix.

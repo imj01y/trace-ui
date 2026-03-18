@@ -2,8 +2,8 @@ use memchr::memmem;
 use smallvec::SmallVec;
 
 use super::parser::{
-    determine_elem_width, extract_reg_values, find_reg_value, first_data_reg_name,
-    parse_hex_u64, parse_operands_into,
+    self, determine_elem_width, extract_reg_values, find_reg_value, find_reg_value_u128,
+    first_data_reg_name, parse_hex_u64, parse_operands_into,
 };
 use super::types::*;
 use super::types::TraceFormat;
@@ -385,11 +385,11 @@ fn find_gumtrace_mem_op(
     let elem_width = determine_elem_width(mnemonic, raw_first_reg_prefix);
 
     // Extract value for pass-through pruning
-    let value = if elem_width <= 8 {
-        first_data_reg_name(operand_text).and_then(|reg_name| {
+    let sc_abs = full_bytes.len() - search.len();
+    let (value, value_lo, value_hi) = if elem_width <= 8 {
+        let v = first_data_reg_name(operand_text).and_then(|reg_name| {
             // For gumtrace, register values appear after the semicolon
             // The semicolon position is at the start of `search` relative to full_bytes
-            let sc_abs = full_bytes.len() - search.len();
             let search_start = if is_write {
                 sc_abs // STORE: search from after semicolon
             } else {
@@ -406,9 +406,67 @@ fn find_gumtrace_mem_op(
                 (1u64 << (elem_width as u32 * 8)) - 1
             };
             Some(raw_val & mask)
-        })
+        });
+        (v, None, None)
+    } else if elem_width == 16 {
+        // 128-bit SIMD: 用 u128 解析后拆为 low/high 两个 u64
+        let v128 = first_data_reg_name(operand_text).and_then(|reg_name| {
+            let search_start = if is_write {
+                sc_abs
+            } else {
+                match arrow_abs_pos {
+                    Some(apos) => apos + 4,
+                    None => return None,
+                }
+            };
+            find_reg_value_u128(full_bytes, reg_name.as_bytes(), search_start)
+        });
+        match v128 {
+            Some(val) => (None, Some(val as u64), Some((val >> 64) as u64)),
+            None => (None, None, None),
+        }
     } else {
-        None
+        (None, None, None)
+    };
+
+    // Pair 指令：提取第二个寄存器的值
+    let (value2, value2_lo, value2_hi) = if parser::is_pair_mnemonic(mnemonic) {
+        if elem_width <= 8 {
+            let v2 = parser::second_data_reg_name(operand_text).and_then(|reg_name| {
+                let search_start = if is_write {
+                    sc_abs
+                } else {
+                    match arrow_abs_pos {
+                        Some(apos) => apos + 4,
+                        None => return None,
+                    }
+                };
+                let raw_val = find_reg_value(full_bytes, reg_name.as_bytes(), search_start)?;
+                let mask = if elem_width >= 8 { u64::MAX } else { (1u64 << (elem_width as u32 * 8)) - 1 };
+                Some(raw_val & mask)
+            });
+            (v2, None, None)
+        } else if elem_width == 16 {
+            let v128 = parser::second_data_reg_name(operand_text).and_then(|reg_name| {
+                let search_start = if is_write {
+                    sc_abs
+                } else {
+                    match arrow_abs_pos {
+                        Some(apos) => apos + 4,
+                        None => return None,
+                    }
+                };
+                find_reg_value_u128(full_bytes, reg_name.as_bytes(), search_start)
+            });
+            match v128 {
+                Some(val) => (None, Some(val as u64), Some((val >> 64) as u64)),
+                None => (None, None, None),
+            }
+        } else {
+            (None, None, None)
+        }
+    } else {
+        (None, None, None)
     };
 
     Some(MemOp {
@@ -416,6 +474,11 @@ fn find_gumtrace_mem_op(
         abs: addr,
         elem_width,
         value,
+        value2,
+        value_lo,
+        value_hi,
+        value2_lo,
+        value2_hi,
     })
 }
 

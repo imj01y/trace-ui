@@ -218,8 +218,18 @@ pub struct MemOp {
     /// 单个元素宽度（字节），由助记符和寄存器前缀推导。
     pub elem_width: u8,
     /// 掩码后的存/取值（用于值相等性剪枝）。
-    /// SIMD 128-bit（q 寄存器）和 LoadPair/StorePair 为 None。
+    /// SIMD 128-bit（q 寄存器）为 None。
     pub value: Option<u64>,
+    /// Pair 指令（ldp/stp）第二个寄存器的值。
+    pub value2: Option<u64>,
+    /// 128-bit 第一个寄存器 low 64 位（elem_width == 16 时有效）。
+    pub value_lo: Option<u64>,
+    /// 128-bit 第一个寄存器 high 64 位（elem_width == 16 时有效）。
+    pub value_hi: Option<u64>,
+    /// 128-bit pair 第二个寄存器 low 64 位（elem_width == 16 时有效）。
+    pub value2_lo: Option<u64>,
+    /// 128-bit pair 第二个寄存器 high 64 位（elem_width == 16 时有效）。
+    pub value2_hi: Option<u64>,
 }
 
 /// ARM64 助记符的栈上存储（最长 ~7 字节）。
