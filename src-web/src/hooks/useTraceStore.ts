@@ -36,6 +36,7 @@ export function useTraceStore(skipStrings: boolean = false) {
   const indexErrorRef = useRef<typeof indexError>(null);
   const [hasStringIndexMap, setHasStringIndexMap] = useState<Map<string, boolean>>(new Map());
   const [memIndexProgressMap, setMemIndexProgressMap] = useState<Map<string, number | null>>(new Map());
+  const [stringIndexProgressMap, setStringIndexProgressMap] = useState<Map<string, number | null>>(new Map());
   const skipStringsRef = useRef(skipStrings);
   skipStringsRef.current = skipStrings;
 
@@ -172,9 +173,21 @@ export function useTraceStore(skipStrings: boolean = false) {
         setMemIndexProgressMap(prev => new Map(prev).set(event.payload.sessionId, null));
       }
     );
+    const unlistenStrProgress = listen<{ sessionId: string; progress: number; done?: boolean }>(
+      "string-index-progress",
+      (event) => {
+        const { sessionId: sid, progress, done } = event.payload;
+        if (done) {
+          setStringIndexProgressMap(prev => new Map(prev).set(sid, null));
+        } else {
+          setStringIndexProgressMap(prev => new Map(prev).set(sid, Math.round(progress * 100)));
+        }
+      }
+    );
     return () => {
       unlistenProgress.then((fn) => fn());
       unlistenReady.then((fn) => fn());
+      unlistenStrProgress.then((fn) => fn());
     };
   }, []);
 
@@ -395,5 +408,6 @@ export function useTraceStore(skipStrings: boolean = false) {
     hasStringIndexMap,
     setHasStringIndexMap,
     memIndexProgress: activeSessionId ? (memIndexProgressMap.get(activeSessionId) ?? null) : null,
+    stringIndexProgress: activeSessionId ? (stringIndexProgressMap.get(activeSessionId) ?? null) : null,
   };
 }

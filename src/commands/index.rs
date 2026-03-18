@@ -73,30 +73,11 @@ pub async fn build_index(
                 }).await;
 
                 if let Ok(mem_idx) = build_result {
-                    // 用路径 1 从 MemAccessIndex 精确构建字符串索引（无跨 chunk 边界精度丢失）
-                    let string_index = {
-                        use crate::taint::mem_access::MemRw;
-                        let mut writes: Vec<(u64, u64, u8, u32)> = Vec::new();
-                        for (addr, rec) in mem_idx.iter_all() {
-                            if rec.rw == MemRw::Write && rec.size <= 8 {
-                                writes.push((addr, rec.data, rec.size, rec.seq));
-                            }
-                        }
-                        writes.sort_unstable_by_key(|w| w.3);
-                        let mut sb = crate::taint::strings::StringBuilder::new();
-                        for &(addr, data, size, seq) in &writes {
-                            sb.process_write(addr, data, size, seq);
-                        }
-                        let mut si = sb.finish();
-                        crate::taint::strings::StringBuilder::fill_xref_counts(&mut si, &mem_idx);
-                        si
-                    };
-
+                    // 先存 MemAccessIndex，发送 mem-index-ready
                     let state = app2.state::<AppState>();
                     if let Ok(mut sessions) = state.sessions.write() {
                         if let Some(session) = sessions.get_mut(&*sid) {
                             if let Some(ref mut phase2) = session.phase2 {
-                                phase2.string_index = string_index;
                                 phase2.mem_accesses = mem_idx;
                             }
                         }
@@ -104,6 +85,80 @@ pub async fn build_index(
                     let _ = app2.emit("mem-index-ready", serde_json::json!({
                         "sessionId": sid,
                     }));
+
+                    // 用路径 1 从 MemAccessIndex 精确构建字符串索引（带进度上报）
+                    let _ = app2.emit("string-index-progress", serde_json::json!({
+                        "sessionId": sid,
+                        "progress": 0.0,
+                    }));
+
+                    let app_for_str = app2.clone();
+                    let sid_for_str = sid.clone();
+                    let str_result = tauri::async_runtime::spawn_blocking(move || {
+                        use crate::taint::mem_access::MemRw;
+
+                        let state = app_for_str.state::<AppState>();
+                        let sessions = state.sessions.read().unwrap();
+                        let session = sessions.get(&*sid_for_str).unwrap();
+                        let phase2 = session.phase2.as_ref().unwrap();
+
+                        // 1. 收集 Write 记录
+                        let mut writes: Vec<(u64, u64, u8, u32)> = Vec::new();
+                        for (addr, rec) in phase2.mem_accesses.iter_all() {
+                            if rec.rw == MemRw::Write && rec.size <= 8 {
+                                writes.push((addr, rec.data, rec.size, rec.seq));
+                            }
+                        }
+                        writes.sort_unstable_by_key(|w| w.3);
+
+                        let _ = app_for_str.emit("string-index-progress", serde_json::json!({
+                            "sessionId": sid_for_str,
+                            "progress": 0.1,
+                        }));
+
+                        // 2. StringBuilder（最慢的部分，占 10%-90%）
+                        let total_writes = writes.len();
+                        let report_interval = (total_writes / 100).max(1);
+                        let mut sb = crate::taint::strings::StringBuilder::new();
+                        for (i, &(addr, data, size, seq)) in writes.iter().enumerate() {
+                            sb.process_write(addr, data, size, seq);
+                            if i % report_interval == 0 {
+                                let frac = 0.1 + 0.8 * (i as f64 / total_writes as f64);
+                                let _ = app_for_str.emit("string-index-progress", serde_json::json!({
+                                    "sessionId": sid_for_str,
+                                    "progress": frac,
+                                }));
+                            }
+                        }
+
+                        let _ = app_for_str.emit("string-index-progress", serde_json::json!({
+                            "sessionId": sid_for_str,
+                            "progress": 0.9,
+                        }));
+
+                        // 3. finish + xref counts
+                        let mut si = sb.finish();
+                        crate::taint::strings::StringBuilder::fill_xref_counts(&mut si, &phase2.mem_accesses);
+
+                        drop(sessions); // 释放读锁
+                        si
+                    }).await;
+
+                    if let Ok(string_index) = str_result {
+                        let state = app2.state::<AppState>();
+                        if let Ok(mut sessions) = state.sessions.write() {
+                            if let Some(session) = sessions.get_mut(&*sid) {
+                                if let Some(ref mut phase2) = session.phase2 {
+                                    phase2.string_index = string_index;
+                                }
+                            }
+                        }
+                        let _ = app2.emit("string-index-progress", serde_json::json!({
+                            "sessionId": sid,
+                            "progress": 1.0,
+                            "done": true,
+                        }));
+                    }
                 }
             });
         }

@@ -17,9 +17,10 @@ interface Props {
   isPhase2Ready: boolean;
   onJumpToSeq: (seq: number) => void;
   stringsScanning?: boolean;
+  stringIndexProgress?: number | null; // null = ready, 0-100 = building
 }
 
-export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq, stringsScanning }: Props) {
+export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq, stringsScanning, stringIndexProgress }: Props) {
   const [strings, setStrings] = useState<StringRecordDto[]>([]);
   const [total, setTotal] = useState(0);
   const [minLen, setMinLen] = useState(4);
@@ -80,6 +81,15 @@ export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq, st
     }
     prevScanningRef.current = !!stringsScanning;
   }, [stringsScanning, loadStrings]);
+
+  // 字符串索引构建完成后自动刷新
+  const prevStringIndexProgressRef = useRef(stringIndexProgress);
+  useEffect(() => {
+    if (prevStringIndexProgressRef.current != null && stringIndexProgress == null) {
+      loadStrings(0, true);
+    }
+    prevStringIndexProgressRef.current = stringIndexProgress;
+  }, [stringIndexProgress, loadStrings]);
 
   // ── 搜索 debounce ──
   const [searchInput, setSearchInput] = useState("");
@@ -243,6 +253,19 @@ export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq, st
     return (
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>Index not ready</span>
+      </div>
+    );
+  }
+
+  if (stringIndexProgress != null) {
+    return (
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8 }}>
+        <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>
+          正在构建字符串索引... {stringIndexProgress}%
+        </span>
+        <div style={{ width: 200, height: 4, background: "var(--border-color)", borderRadius: 2 }}>
+          <div style={{ width: `${stringIndexProgress}%`, height: "100%", background: "var(--accent-color, #4a9eff)", borderRadius: 2, transition: "width 0.3s ease" }} />
+        </div>
       </div>
     );
   }
