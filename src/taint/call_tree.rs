@@ -1,6 +1,4 @@
-use serde::{Serialize, Deserialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CallTreeNode {
     pub id: u32,
     pub func_addr: u64,
@@ -12,7 +10,7 @@ pub struct CallTreeNode {
     pub children_ids: Vec<u32>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct CallTree {
     pub nodes: Vec<CallTreeNode>,
 }
