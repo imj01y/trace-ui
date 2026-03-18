@@ -88,6 +88,7 @@ function App() {
     getSelectedSeqForSession,
     hasStringIndexMap,
     setHasStringIndexMap,
+    memIndexProgress,
   } = useTraceStore(!preferences.scanStringsOnBuild);
 
   const slice = useSliceState(activeSessionId);
@@ -1082,6 +1083,7 @@ function App() {
                 sliceInfo={slice.sliceInfo}
                 sliceFromSpecs={slice.sliceFromSpecs}
                 stringsScanning={stringsScanningSessionId === activeSessionId}
+                memIndexProgress={memIndexProgress}
               />
             </Panel>
           </Group>

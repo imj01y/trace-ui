@@ -53,10 +53,23 @@ pub async fn build_index(
             let sid = session_id.clone();
             let app2 = app.clone();
 
+            // Emit initial progress
+            let _ = app2.emit("mem-index-progress", serde_json::json!({
+                "sessionId": sid,
+                "progress": 0.0,
+            }));
+
             tauri::async_runtime::spawn(async move {
                 let mmap_for_build = mmap_clone.clone();
+                let app_for_progress = app2.clone();
+                let sid_for_progress = sid.clone();
                 let build_result = tauri::async_runtime::spawn_blocking(move || {
-                    build_mem_access_index_from_data(&mmap_for_build, trace_format)
+                    build_mem_access_index_from_data(&mmap_for_build, trace_format, Some(&move |frac: f64| {
+                        let _ = app_for_progress.emit("mem-index-progress", serde_json::json!({
+                            "sessionId": sid_for_progress,
+                            "progress": frac,
+                        }));
+                    }))
                 }).await;
 
                 if let Ok(mem_idx) = build_result {
@@ -251,9 +264,11 @@ async fn build_index_inner(
 fn build_mem_access_index_from_data(
     data: &[u8],
     format: TraceFormat,
+    progress_fn: Option<&(dyn Fn(f64) + Send + Sync)>,
 ) -> MemAccessIndex {
     use memchr::memchr;
     use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use crate::taint::{parser, gumtrace_parser};
     use crate::taint::parallel::split_into_chunks;
     use crate::phase2;
@@ -262,8 +277,10 @@ fn build_mem_access_index_from_data(
         .map(|n| n.get())
         .unwrap_or(4);
     let chunks = split_into_chunks(data, num_cpus);
+    let data_len = data.len();
+    let global_bytes_done = AtomicUsize::new(0);
 
-    // Phase 1: parallel — each chunk builds its own MemAccessIndex
+    // Phase 1: parallel — each chunk builds its own MemAccessIndex (0%-80%)
     let chunk_indices: Vec<MemAccessIndex> = chunks
         .par_iter()
         .map(|meta| {
@@ -318,17 +335,31 @@ fn build_mem_access_index_from_data(
                 pos = if line_end < search_end { line_end + 1 } else { search_end };
             }
 
+            // Report per-chunk progress (Phase 1 = 0%-80%)
+            if let Some(ref cb) = progress_fn {
+                let done = global_bytes_done.fetch_add(meta.end_byte - meta.start_byte, Ordering::Relaxed)
+                    + (meta.end_byte - meta.start_byte);
+                cb(done as f64 / data_len as f64 * 0.8);
+            }
+
             mem_idx
         })
         .collect();
 
-    // Phase 2: sequential merge — records in chunk order = correct seq order
+    if let Some(ref cb) = progress_fn { cb(0.8); }
+
+    // Phase 2: sequential merge — records in chunk order = correct seq order (80%-100%)
+    let total_chunks = chunk_indices.len();
     let mut merged = MemAccessIndex::new();
-    for idx in chunk_indices {
+    for (i, idx) in chunk_indices.into_iter().enumerate() {
         for (addr, record) in idx.iter_all() {
             merged.add(addr, record.clone());
         }
+        if let Some(ref cb) = progress_fn {
+            cb(0.8 + 0.2 * (i + 1) as f64 / total_chunks as f64);
+        }
     }
 
+    if let Some(ref cb) = progress_fn { cb(1.0); }
     merged
 }

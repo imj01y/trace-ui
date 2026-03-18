@@ -33,6 +33,7 @@ interface Props {
   sliceInfo: SliceResult | null;
   sliceFromSpecs: string[];
   stringsScanning?: boolean;
+  memIndexProgress?: number | null;
 }
 
 export default function TabPanel({
@@ -41,6 +42,7 @@ export default function TabPanel({
   floatedPanels, onFloat, sessionId,
   sliceActive, sliceInfo, sliceFromSpecs,
   stringsScanning,
+  memIndexProgress,
 }: Props) {
   const [active, setActive] = useState<TabName>("Memory");
   const changesCol = useResizableColumn(Math.min(300, Math.round(window.innerWidth * 0.2)));
@@ -139,6 +141,7 @@ export default function TabPanel({
           onJumpToSeq={onJumpToSeq}
           sessionId={sessionId}
           resetKey={memResetKey}
+          memIndexProgress={memIndexProgress}
         />
       </div>
 
