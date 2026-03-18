@@ -156,11 +156,16 @@ async fn build_index_inner(
             );
         }
 
-        // 压缩 + 保存缓存
+        // 压缩
         scan_result.scan_state.compact();
-        cache::save_cache(&file_path, data, &scan_result.phase2);
-        cache::save_scan_cache(&file_path, data, &scan_result.scan_state);
-        cache::save_line_index_cache(&file_path, data, &scan_result.line_index);
+
+        // 保存缓存（大文件跳过：序列化 6GB+ 数据会导致内存压力过大 + 产生巨大缓存文件）
+        const CACHE_SIZE_LIMIT: usize = 2 * 1024 * 1024 * 1024; // 2GB
+        if data.len() <= CACHE_SIZE_LIMIT {
+            cache::save_cache(&file_path, data, &scan_result.phase2);
+            cache::save_scan_cache(&file_path, data, &scan_result.scan_state);
+            cache::save_line_index_cache(&file_path, data, &scan_result.line_index);
+        }
 
         Ok::<_, String>(scan_result)
     })
