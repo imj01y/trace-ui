@@ -49,13 +49,12 @@ fn node_to_dto(n: &CallTreeNode, line_index: Option<&LineIndex>, data: &[u8]) ->
 pub fn get_call_tree(session_id: String, state: State<'_, AppState>) -> Result<Vec<CallTreeNodeDto>, String> {
     let sessions = state.sessions.read().map_err(|e| e.to_string())?;
     let session = sessions.get(&session_id).ok_or_else(|| format!("Session {} 不存在", session_id))?;
-    let phase2 = session.phase2.as_ref().ok_or("索引尚未构建完成")?;
+    let call_tree = session.call_tree.as_ref().ok_or("索引尚未构建完成")?;
 
     let data: &[u8] = &session.mmap;
     let line_index = session.line_index.as_ref();
 
-    let nodes: Vec<CallTreeNodeDto> = phase2
-        .call_tree
+    let nodes: Vec<CallTreeNodeDto> = call_tree
         .nodes
         .iter()
         .map(|n| node_to_dto(n, line_index, data))
@@ -69,8 +68,8 @@ pub fn get_call_tree(session_id: String, state: State<'_, AppState>) -> Result<V
 pub fn get_call_tree_node_count(session_id: String, state: State<'_, AppState>) -> Result<u32, String> {
     let sessions = state.sessions.read().map_err(|e| e.to_string())?;
     let session = sessions.get(&session_id).ok_or_else(|| format!("Session {} 不存在", session_id))?;
-    let phase2 = session.phase2.as_ref().ok_or("索引尚未构建完成")?;
-    Ok(phase2.call_tree.nodes.len() as u32)
+    let call_tree = session.call_tree.as_ref().ok_or("索引尚未构建完成")?;
+    Ok(call_tree.nodes.len() as u32)
 }
 
 /// 返回指定节点的直接子节点（可选包含自身）
@@ -83,12 +82,12 @@ pub fn get_call_tree_children(
 ) -> Result<Vec<CallTreeNodeDto>, String> {
     let sessions = state.sessions.read().map_err(|e| e.to_string())?;
     let session = sessions.get(&session_id).ok_or_else(|| format!("Session {} 不存在", session_id))?;
-    let phase2 = session.phase2.as_ref().ok_or("索引尚未构建完成")?;
+    let call_tree = session.call_tree.as_ref().ok_or("索引尚未构建完成")?;
 
     let data: &[u8] = &session.mmap;
     let line_index = session.line_index.as_ref();
 
-    let node = phase2.call_tree.nodes.get(node_id as usize)
+    let node = call_tree.nodes.get(node_id as usize)
         .ok_or_else(|| format!("节点 {} 不存在", node_id))?;
 
     let mut result = Vec::new();
@@ -98,7 +97,7 @@ pub fn get_call_tree_children(
     }
 
     for &child_id in &node.children_ids {
-        if let Some(child) = phase2.call_tree.nodes.get(child_id as usize) {
+        if let Some(child) = call_tree.nodes.get(child_id as usize) {
             result.push(node_to_dto(child, line_index, data));
         }
     }

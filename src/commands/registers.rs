@@ -36,12 +36,12 @@ const REG_NAMES: &[(&str, u8)] = &[
 pub fn get_registers_at(session_id: String, seq: u32, state: State<'_, AppState>) -> Result<HashMap<String, String>, String> {
     let sessions = state.sessions.read().map_err(|e| e.to_string())?;
     let session = sessions.get(&session_id).ok_or_else(|| format!("Session {} 不存在", session_id))?;
-    let phase2 = session.phase2.as_ref().ok_or("索引尚未构建完成")?;
+    let reg_view = session.reg_checkpoints_view().ok_or("无可用检查点")?;
     let line_index = session.line_index.as_ref().ok_or_else(|| "索引尚未构建完成".to_string())?;
 
     // 找最近检查点
-    let (ckpt_seq, snapshot) = phase2.reg_checkpoints
-        .get_nearest_before(seq)
+    let (ckpt_seq, snapshot) = reg_view
+        .nearest_before(seq)
         .ok_or("无可用检查点")?;
 
     let mut values = *snapshot;
