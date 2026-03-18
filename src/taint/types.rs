@@ -17,7 +17,7 @@ impl Default for TraceFormat {
 /// ARM64 寄存器标识符。
 ///
 /// 使用 `u8` 编码：x0-x28=0-28, x29(fp)=29, x30(lr)=30, sp=31, xzr=32,
-/// v0-v31=33-64, nzcv=65。总共 66 个寄存器。
+/// v0_lo-v31_lo=33-64, nzcv=65, v0_hi-v31_hi=66-97。总共 98 个寄存器。
 #[derive(Copy, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct RegId(pub u8);
 
@@ -89,12 +89,63 @@ impl RegId {
     pub const V30: Self = Self(63);
     pub const V31: Self = Self(64);
     pub const NZCV: Self = Self(65);
-    /// Total number of distinct RegId values (0..=65).
-    pub const COUNT: usize = 66;
+    // SIMD hi-lanes (high 64-bit of v0-v31)
+    pub const V0_HI: Self = Self(66);
+    pub const V1_HI: Self = Self(67);
+    pub const V2_HI: Self = Self(68);
+    pub const V3_HI: Self = Self(69);
+    pub const V4_HI: Self = Self(70);
+    pub const V5_HI: Self = Self(71);
+    pub const V6_HI: Self = Self(72);
+    pub const V7_HI: Self = Self(73);
+    pub const V8_HI: Self = Self(74);
+    pub const V9_HI: Self = Self(75);
+    pub const V10_HI: Self = Self(76);
+    pub const V11_HI: Self = Self(77);
+    pub const V12_HI: Self = Self(78);
+    pub const V13_HI: Self = Self(79);
+    pub const V14_HI: Self = Self(80);
+    pub const V15_HI: Self = Self(81);
+    pub const V16_HI: Self = Self(82);
+    pub const V17_HI: Self = Self(83);
+    pub const V18_HI: Self = Self(84);
+    pub const V19_HI: Self = Self(85);
+    pub const V20_HI: Self = Self(86);
+    pub const V21_HI: Self = Self(87);
+    pub const V22_HI: Self = Self(88);
+    pub const V23_HI: Self = Self(89);
+    pub const V24_HI: Self = Self(90);
+    pub const V25_HI: Self = Self(91);
+    pub const V26_HI: Self = Self(92);
+    pub const V27_HI: Self = Self(93);
+    pub const V28_HI: Self = Self(94);
+    pub const V29_HI: Self = Self(95);
+    pub const V30_HI: Self = Self(96);
+    pub const V31_HI: Self = Self(97);
+    /// Total number of distinct RegId values (0..=97).
+    pub const COUNT: usize = 98;
 
     pub fn is_zero(self) -> bool {
         self == Self::XZR
     }
+
+    /// For a SIMD lo-lane RegId (33..=64), return the corresponding hi-lane.
+    pub fn simd_hi(self) -> Option<RegId> {
+        if self.0 >= 33 && self.0 <= 64 {
+            Some(RegId(self.0 + 33))
+        } else {
+            None
+        }
+    }
+
+    /// True if this is a SIMD lo-lane (v0..v31, IDs 33-64).
+    pub fn is_simd_lo(self) -> bool { self.0 >= 33 && self.0 <= 64 }
+
+    /// True if this is a SIMD hi-lane (v0_hi..v31_hi, IDs 66-97).
+    pub fn is_simd_hi(self) -> bool { self.0 >= 66 && self.0 <= 97 }
+
+    /// True if this is any SIMD register (lo or hi lane).
+    pub fn is_simd(self) -> bool { self.is_simd_lo() || self.is_simd_hi() }
 }
 
 impl fmt::Debug for RegId {
@@ -105,6 +156,7 @@ impl fmt::Debug for RegId {
             Self::NZCV => write!(f, "nzcv"),
             r if r.0 <= 30 => write!(f, "x{}", r.0),
             r if (33..=64).contains(&r.0) => write!(f, "v{}", r.0 - 33),
+            r if (66..=97).contains(&r.0) => write!(f, "v{}_hi", r.0 - 66),
             _ => write!(f, "reg({})", self.0),
         }
     }
