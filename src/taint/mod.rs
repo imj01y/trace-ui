@@ -31,7 +31,7 @@ use scanner::{
 };
 use types::RegId;
 
-pub type ProgressFn = Box<dyn Fn(usize, usize) + Send>;
+pub type ProgressFn = Box<dyn Fn(usize, usize) + Send + Sync>;
 
 const CHECKPOINT_INTERVAL: u32 = 1000;
 

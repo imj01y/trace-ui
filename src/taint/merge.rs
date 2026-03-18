@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use bitvec::prelude::BitVec;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use crate::line_index::LineIndex;
 use crate::taint::call_tree::{CallTree, CallTreeBuilder};
@@ -482,15 +483,15 @@ pub fn merge_all_chunks(
     let mut global_reg_last_def = RegLastDef::new();
     let mut global_last_cond_branch: Option<u32> = None;
 
-    // Collect partial pair fixup info during first pass (borrow only)
-    struct PartialPairFixupInfo {
-        partial_pair_loads: Vec<PartialUnresolvedPairLoad>,
+    // Lightweight deferred pair deps — resolved inline from global state (no cloning)
+    struct DeferredPairDep {
+        line: u32,
         chunk_idx: usize,
-        // Snapshot of global state at the time of this chunk
-        mem_snapshot: FxHashMap<u64, (u32, u64)>,
-        reg_snapshot: RegLastDef,
+        extra_half1: SmallVec<[u32; 4]>,
+        extra_half2: SmallVec<[u32; 4]>,
+        extra_shared: SmallVec<[u32; 2]>,
     }
-    let mut partial_pair_fixups: Vec<PartialPairFixupInfo> = Vec::new();
+    let mut deferred_pair_deps: Vec<DeferredPairDep> = Vec::new();
 
     // Pass 1: Forward propagation + fixup (borrow chunk_results)
     for (i, chunk) in chunk_results.iter().enumerate() {
@@ -527,24 +528,48 @@ pub fn merge_all_chunks(
                 all_patch_edges.extend(edges);
             }
 
-            // === Collect partial pair loads for later fixup (need mutable pair_split) ===
+            // === Resolve partial pair loads inline (no snapshot cloning) ===
             if !chunk.partial_unresolved_pair_loads.is_empty() {
-                partial_pair_fixups.push(PartialPairFixupInfo {
-                    partial_pair_loads: chunk.partial_unresolved_pair_loads.iter().map(|p| {
-                        PartialUnresolvedPairLoad {
-                            line: p.line,
-                            addr: p.addr,
-                            elem_width: p.elem_width,
-                            half1_unresolved: p.half1_unresolved,
-                            half2_unresolved: p.half2_unresolved,
-                            base_reg: p.base_reg,
-                            base_reg_unresolved: p.base_reg_unresolved,
+                for partial in &chunk.partial_unresolved_pair_loads {
+                    let mut extra_half1 = SmallVec::<[u32; 4]>::new();
+                    let mut extra_half2 = SmallVec::<[u32; 4]>::new();
+                    let mut extra_shared = SmallVec::<[u32; 2]>::new();
+
+                    if partial.half1_unresolved {
+                        for offset in 0..partial.elem_width as u64 {
+                            if let Some(&(raw, _)) = global_mem_last_def.get(&(partial.addr + offset)) {
+                                push_unique(&mut extra_half1, raw);
+                                all_patch_edges.push((partial.line, raw));
+                            }
                         }
-                    }).collect(),
-                    chunk_idx: i,
-                    mem_snapshot: global_mem_last_def.clone(),
-                    reg_snapshot: global_reg_last_def.clone(),
-                });
+                    }
+                    if partial.half2_unresolved {
+                        for offset in partial.elem_width as u64..2 * partial.elem_width as u64 {
+                            if let Some(&(raw, _)) = global_mem_last_def.get(&(partial.addr + offset)) {
+                                push_unique(&mut extra_half2, raw);
+                                all_patch_edges.push((partial.line, raw));
+                            }
+                        }
+                    }
+                    if partial.base_reg_unresolved {
+                        if let Some(base) = partial.base_reg {
+                            if let Some(&raw) = global_reg_last_def.get(&base) {
+                                push_unique(&mut extra_shared, raw);
+                                all_patch_edges.push((partial.line, raw));
+                            }
+                        }
+                    }
+
+                    if !extra_half1.is_empty() || !extra_half2.is_empty() || !extra_shared.is_empty() {
+                        deferred_pair_deps.push(DeferredPairDep {
+                            line: partial.line,
+                            chunk_idx: i,
+                            extra_half1,
+                            extra_half2,
+                            extra_shared,
+                        });
+                    }
+                }
             }
 
             // === Resolve unresolved register uses ===
@@ -623,28 +648,31 @@ pub fn merge_all_chunks(
         prev_final_reg_values = chunk.boundary.final_reg_values;
     }
 
-    // === Handle partial pair load fixups (need mutable access to pair_splits) ===
-    for fixup_info in &partial_pair_fixups {
-        let pair_split = &mut chunk_pair_splits[fixup_info.chunk_idx];
-        for partial in &fixup_info.partial_pair_loads {
-            resolve_partial_pair_load(
-                partial,
-                &fixup_info.mem_snapshot,
-                &fixup_info.reg_snapshot,
-                pair_split,
-                &mut all_patch_edges,
-            );
+    // === Apply deferred pair deps (lightweight, no snapshot needed) ===
+    for dep in &deferred_pair_deps {
+        let pair_split = &mut chunk_pair_splits[dep.chunk_idx];
+        let split = pair_split.entry(dep.line).or_default();
+        for &d in &dep.extra_half1 {
+            push_unique(&mut split.half1_deps, d);
+        }
+        for &d in &dep.extra_half2 {
+            push_unique(&mut split.half2_deps, d);
+        }
+        for &d in &dep.extra_shared {
+            push_unique(&mut split.shared, d);
         }
     }
 
     // === Rebuild unified data structures ===
 
-    // CompactDeps
-    let merged_deps = rebuild_compact_deps(&chunk_deps, &chunk_start_lines, &all_patch_edges);
-
-    // Total lines
+    // Total lines (compute before dropping chunk_deps)
     let total_lines = chunk_start_lines.last().copied().unwrap_or(0)
         + chunk_deps.last().map(|d| d.offsets.len() as u32).unwrap_or(0);
+
+    // CompactDeps
+    let merged_deps = rebuild_compact_deps(&chunk_deps, &chunk_start_lines, &all_patch_edges);
+    drop(chunk_deps); // Free ~6GB immediately
+    drop(all_patch_edges); // Free patch edges
 
     // CallTree
     let call_tree = replay_call_tree_events(&all_call_events, total_lines);

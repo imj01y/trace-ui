@@ -39,11 +39,18 @@ pub fn scan_unified_parallel(
         cb(0, data.len());
     }
 
-    // Phase 1: Parallel chunk scanning
+    // Phase 1: Parallel chunk scanning with progress reporting
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let processed_bytes = AtomicUsize::new(0);
+    let data_len = data.len();
+    let progress_fn_arc = progress_fn.map(|f| Arc::new(f));
+
     let chunk_results: Vec<_> = chunks_meta
         .par_iter()
         .map(|meta| {
-            chunk_scan::scan_chunk(
+            let result = chunk_scan::scan_chunk(
                 data,
                 meta.start_byte,
                 meta.end_byte,
@@ -52,18 +59,27 @@ pub fn scan_unified_parallel(
                 data_only,
                 no_prune,
                 skip_strings,
-            )
+            );
+            // Report progress: Phase 1 maps to 0%-67% of total progress
+            let done = processed_bytes.fetch_add(meta.end_byte - meta.start_byte, Ordering::Relaxed)
+                + (meta.end_byte - meta.start_byte);
+            if let Some(ref cb) = progress_fn_arc {
+                let progress = done * 2 / 3; // Phase 1 = first 67%
+                cb(progress, data_len);
+            }
+            result
         })
         .collect();
 
-    if let Some(ref cb) = progress_fn {
-        cb(data.len() * 2 / 3, data.len());
+    // Phase 1 complete — progress is at 67%
+    if let Some(ref cb) = progress_fn_arc {
+        cb(data_len * 2 / 3, data_len);
     }
 
     // Phase 2: Sequential merge
     let result = merge::merge_all_chunks(chunk_results, format, data_only);
 
-    if let Some(ref cb) = progress_fn {
+    if let Some(ref cb) = progress_fn_arc {
         cb(data.len(), data.len());
     }
 
