@@ -705,9 +705,12 @@ pub fn merge_all_chunks(
 
     if let Some(ref cb) = progress_fn { cb(0.8); }
 
+    eprintln!("[merge] 0.8 done, starting final assembly...");
+
     // consumed_seqs
     all_consumed_seqs.extend(extra_consumed);
     all_consumed_seqs.sort_unstable();
+    eprintln!("[merge] consumed_seqs sorted ({})", all_consumed_seqs.len());
 
     // MemAccessIndex — built lazily on demand, not during initial scan
     let mem_accesses = MemAccessIndex::new();
@@ -718,6 +721,7 @@ pub fn merge_all_chunks(
         for ckpt in chunk_reg_ckpts {
             all_snapshots.extend(ckpt.snapshots);
         }
+        eprintln!("[merge] RegCheckpoints merged ({} snapshots)", all_snapshots.len());
         RegCheckpoints {
             interval: 1000,
             snapshots: all_snapshots,
@@ -726,19 +730,25 @@ pub fn merge_all_chunks(
 
     // StringIndex
     let string_index = merge_string_indices(chunk_string_indices);
+    eprintln!("[merge] StringIndex merged ({} strings)", string_index.strings.len());
 
     // LineIndex
     let line_index = merge_line_indices(chunk_line_indices);
+    eprintln!("[merge] LineIndex merged ({} lines)", line_index.total_lines());
 
     // init_mem_loads
     let init_mem_loads = merge_init_mem_loads(chunk_inits, &init_corrections);
+    eprintln!("[merge] init_mem_loads merged ({} bits)", init_mem_loads.len());
 
     // pair_split
     let pair_split = merge_pair_splits(chunk_pair_splits, all_pair_fixups);
+    eprintln!("[merge] pair_split merged ({} entries)", pair_split.len());
 
     // Build ScanState — use pre-compacted sorted Vec (already freed HashMap in Pass 1)
+    eprintln!("[merge] global_mem_sorted: {} entries", global_mem_sorted.len());
     let mem_last_def_map = MemLastDef::Sorted(global_mem_sorted);
 
+    eprintln!("[merge] building ScanState...");
     let scan_state = ScanState {
         reg_last_def: global_reg_last_def,
         mem_last_def: mem_last_def_map,
@@ -752,6 +762,7 @@ pub fn merge_all_chunks(
         init_mem_loads,
         pair_split,
     };
+    eprintln!("[merge] ScanState built OK");
 
     let phase2 = Phase2State {
         call_tree,

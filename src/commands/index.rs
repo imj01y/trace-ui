@@ -157,21 +157,31 @@ async fn build_index_inner(
         }
 
         // 压缩
+        eprintln!("[index] scan complete, compacting...");
         scan_result.scan_state.compact();
+        eprintln!("[index] compact done");
 
         // 保存缓存（大文件跳过：序列化 6GB+ 数据会导致内存压力过大 + 产生巨大缓存文件）
         const CACHE_SIZE_LIMIT: usize = 2 * 1024 * 1024 * 1024; // 2GB
         if data.len() <= CACHE_SIZE_LIMIT {
+            eprintln!("[index] saving cache...");
             cache::save_cache(&file_path, data, &scan_result.phase2);
+            eprintln!("[index] phase2 cache saved");
             cache::save_scan_cache(&file_path, data, &scan_result.scan_state);
+            eprintln!("[index] scan cache saved");
             cache::save_line_index_cache(&file_path, data, &scan_result.line_index);
+            eprintln!("[index] line index cache saved");
+        } else {
+            eprintln!("[index] skipping cache (file size {} > {})", data.len(), CACHE_SIZE_LIMIT);
         }
 
+        eprintln!("[index] returning scan_result from spawn_blocking");
         Ok::<_, String>(scan_result)
     })
     .await
     .map_err(|e| format!("扫描线程 panic: {}", e))??;
 
+    eprintln!("[index] spawn_blocking returned, writing to session...");
     // 写入结果
     {
         let scan_result = result;

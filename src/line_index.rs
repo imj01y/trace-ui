@@ -113,14 +113,15 @@ impl LineIndex {
     }
 
     /// Merge multiple LineIndex instances (for parallel scanning).
-    /// Each chunk used global byte offsets and LineIndexBuilder with correct start_line,
-    /// so sampled_offsets are globally aligned. Simply concatenate and sum totals.
+    /// Each chunk's LineIndexBuilder starts counting from start_line (global offset),
+    /// so each chunk's `total` = start_line + chunk_lines = global ending line number.
+    /// The last chunk's `total` is therefore the global total line count.
     pub(crate) fn merge(indices: Vec<LineIndex>) -> LineIndex {
         let mut all_offsets = Vec::new();
-        let mut total = 0u32;
+        // Last chunk's total IS the global total (start_of_last + lines_in_last)
+        let total = indices.last().map(|idx| idx.total).unwrap_or(0);
         for idx in indices {
             all_offsets.extend(idx.sampled_offsets);
-            total += idx.total;
         }
         LineIndex {
             sampled_offsets: all_offsets,
