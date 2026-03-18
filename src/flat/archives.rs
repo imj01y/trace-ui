@@ -1,4 +1,6 @@
 use crate::taint::call_tree::CallTree;
+use crate::taint::scanner::RegLastDef;
+use crate::taint::types::RegId;
 use std::sync::Arc;
 use memmap2::Mmap;
 
@@ -165,6 +167,17 @@ impl CachedStore<ScanArchive> {
         }
     }
 
+    pub fn deserialize_reg_last_def(&self) -> RegLastDef {
+        let inner = self.reg_last_def_inner();
+        let mut rld = RegLastDef::new();
+        for (i, &v) in inner.iter().enumerate().take(RegId::COUNT) {
+            if v != u32::MAX {
+                rld.insert(RegId(i as u8), v);
+            }
+        }
+        rld
+    }
+
     pub fn scan_view(&self) -> ScanView<'_> {
         ScanView {
             deps: self.deps_view(),
@@ -178,6 +191,10 @@ impl CachedStore<ScanArchive> {
 // ── CachedStore<LineIndexArchive> ────────────────────────────────────────────
 
 impl CachedStore<LineIndexArchive> {
+    pub fn total_lines(&self) -> u32 {
+        self.view().total_lines()
+    }
+
     pub fn view(&self) -> LineIndexView<'_> {
         match self {
             Self::Owned(a) => a.view(),
