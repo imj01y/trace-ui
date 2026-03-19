@@ -40,6 +40,8 @@ pub struct SearchResult {
 enum SearchMode {
     TextInsensitive(Vec<u8>),
     TextSensitive(Vec<u8>),
+    /// 多个关键词模糊匹配（空格分隔，全部命中才算匹配，不区分大小写）
+    FuzzyText(Vec<Vec<u8>>),
     Regex(regex::bytes::Regex),
 }
 
@@ -58,7 +60,14 @@ fn parse_search_mode(query: &str, case_sensitive: bool, use_regex: bool) -> Resu
     } else if case_sensitive {
         Ok(SearchMode::TextSensitive(query.as_bytes().to_vec()))
     } else {
-        Ok(SearchMode::TextInsensitive(query.to_lowercase().into_bytes()))
+        let tokens: Vec<Vec<u8>> = query.split_whitespace()
+            .map(|t| t.to_lowercase().into_bytes())
+            .collect();
+        if tokens.len() > 1 {
+            Ok(SearchMode::FuzzyText(tokens))
+        } else {
+            Ok(SearchMode::TextInsensitive(query.to_lowercase().into_bytes()))
+        }
     }
 }
 
@@ -76,6 +85,12 @@ fn ascii_contains(haystack: &[u8], needle: &[u8]) -> bool {
     })
 }
 
+/// 零分配多关键词模糊匹配
+#[inline]
+fn ascii_fuzzy_match(haystack: &[u8], tokens: &[Vec<u8>]) -> bool {
+    tokens.iter().all(|t| ascii_contains(haystack, t))
+}
+
 #[inline]
 fn ascii_contains_sensitive(haystack: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() { return true; }
@@ -89,6 +104,7 @@ fn matches_line(mode: &SearchMode, line: &[u8], call_text: Option<&[u8]>) -> boo
     let line_match = match mode {
         SearchMode::TextInsensitive(needle) => ascii_contains(line, needle),
         SearchMode::TextSensitive(needle) => ascii_contains_sensitive(line, needle),
+        SearchMode::FuzzyText(tokens) => ascii_fuzzy_match(line, tokens),
         SearchMode::Regex(re) => re.is_match(line),
     };
     if line_match { return true; }
@@ -96,6 +112,7 @@ fn matches_line(mode: &SearchMode, line: &[u8], call_text: Option<&[u8]>) -> boo
         match mode {
             SearchMode::TextInsensitive(needle) => ascii_contains(text, needle),
             SearchMode::TextSensitive(needle) => ascii_contains_sensitive(text, needle),
+            SearchMode::FuzzyText(tokens) => ascii_fuzzy_match(text, tokens),
             SearchMode::Regex(re) => re.is_match(text),
         }
     } else { false }
@@ -191,6 +208,7 @@ fn matches_mode_bytes(mode: &SearchMode, text: &[u8]) -> bool {
     match mode {
         SearchMode::TextInsensitive(needle) => ascii_contains(text, needle),
         SearchMode::TextSensitive(needle) => ascii_contains_sensitive(text, needle),
+        SearchMode::FuzzyText(tokens) => ascii_fuzzy_match(text, tokens),
         SearchMode::Regex(re) => re.is_match(text),
     }
 }

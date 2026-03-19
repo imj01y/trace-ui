@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 
 export interface SearchOptions {
   caseSensitive: boolean;
@@ -86,40 +86,26 @@ export default function SearchBar({
   query, onQueryChange, onSearch, onPrevMatch, onNextMatch, matchInfo,
   inputRef: externalRef, initialOptions, onOptionsChange,
 }: SearchBarProps) {
-  const [caseSensitive, setCaseSensitive] = useState(initialOptions?.caseSensitive ?? false);
-  const [wholeWord, setWholeWord] = useState(initialOptions?.wholeWord ?? false);
-  const [useRegex, setUseRegex] = useState(initialOptions?.useRegex ?? false);
+  const [options, setOptions] = useState<SearchOptions>(
+    initialOptions ?? { caseSensitive: false, wholeWord: false, useRegex: false }
+  );
   const internalRef = useRef<HTMLInputElement>(null);
   const ref = externalRef || internalRef;
 
-  const getOptions = useCallback((): SearchOptions => ({
-    caseSensitive, wholeWord, useRegex,
-  }), [caseSensitive, wholeWord, useRegex]);
+  // 同步外部 initialOptions 变化（ESC 还原时）
+  useEffect(() => {
+    if (initialOptions) {
+      setOptions(initialOptions);
+    }
+  }, [initialOptions]);
 
-  // toggle 变化时通知父组件
-  const toggleCaseSensitive = useCallback(() => {
-    setCaseSensitive(v => {
-      const next = !v;
-      onOptionsChange?.({ caseSensitive: next, wholeWord, useRegex });
+  const toggle = useCallback((key: keyof SearchOptions) => {
+    setOptions(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      onOptionsChange?.(next);
       return next;
     });
-  }, [wholeWord, useRegex, onOptionsChange]);
-
-  const toggleWholeWord = useCallback(() => {
-    setWholeWord(v => {
-      const next = !v;
-      onOptionsChange?.({ caseSensitive, wholeWord: next, useRegex });
-      return next;
-    });
-  }, [caseSensitive, useRegex, onOptionsChange]);
-
-  const toggleUseRegex = useCallback(() => {
-    setUseRegex(v => {
-      const next = !v;
-      onOptionsChange?.({ caseSensitive, wholeWord, useRegex: next });
-      return next;
-    });
-  }, [caseSensitive, wholeWord, onOptionsChange]);
+  }, [onOptionsChange]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
@@ -127,11 +113,11 @@ export default function SearchBar({
       if (e.shiftKey) {
         onPrevMatch();
       } else {
-        onSearch(query, getOptions());
+        onSearch(query, options);
         onNextMatch();
       }
     }
-  }, [query, onSearch, onPrevMatch, onNextMatch, getOptions]);
+  }, [query, options, onSearch, onPrevMatch, onNextMatch]);
 
   return (
     <div style={{
@@ -162,16 +148,16 @@ export default function SearchBar({
         />
         <div style={{ display: "flex", gap: 1, paddingRight: 4, flexShrink: 0 }}>
           <ToggleButton
-            active={caseSensitive}
-            onClick={toggleCaseSensitive}
-            title="Match Case (Alt+C)"
+            active={options.caseSensitive}
+            onClick={() => toggle("caseSensitive")}
+            title="Match Case"
           >
             <span style={{ fontSize: 13, fontFamily: "serif", fontWeight: 600 }}>Aa</span>
           </ToggleButton>
           <ToggleButton
-            active={wholeWord}
-            onClick={toggleWholeWord}
-            title="Match Whole Word (Alt+W)"
+            active={options.wholeWord}
+            onClick={() => toggle("wholeWord")}
+            title="Match Whole Word"
           >
             <span style={{
               fontSize: 10, fontWeight: 700,
@@ -180,9 +166,9 @@ export default function SearchBar({
             }}>ab</span>
           </ToggleButton>
           <ToggleButton
-            active={useRegex}
-            onClick={toggleUseRegex}
-            title="Use Regular Expression (Alt+R)"
+            active={options.useRegex}
+            onClick={() => toggle("useRegex")}
+            title="Use Regular Expression"
           >
             <span style={{ fontSize: 12 }}>.*</span>
           </ToggleButton>
