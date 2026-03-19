@@ -91,3 +91,221 @@ export function highlightText(
   }
   return <>{parts}</>;
 }
+
+// ── Hexdump 跨行高亮 ──
+
+/** hexdump 行解析结果 */
+interface HexdumpLine {
+  lineIndex: number;
+  prefix: string;
+  hexPart: string;
+  hexStart: number;
+  asciiPart: string;
+  asciiStart: number;
+  separator: string;
+  suffix: string;
+  byteCount: number;
+}
+
+function isSpacedHex(q: string): boolean {
+  return /^[0-9a-f]{2}( [0-9a-f]{2})+$/i.test(q);
+}
+
+function isCompactHex(q: string): boolean {
+  return q.length >= 4 && q.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(q);
+}
+
+function compactToSpaced(q: string): string {
+  const pairs: string[] = [];
+  for (let i = 0; i < q.length; i += 2) {
+    pairs.push(q.slice(i, i + 2));
+  }
+  return pairs.join(" ");
+}
+
+function parseHexdumpLine(line: string, lineIndex: number): HexdumpLine | null {
+  const match = /^([0-9a-fA-F]+:\s)(.+?)\s*\|(.+)\|$/.exec(line);
+  if (!match) return null;
+  const prefix = match[1];
+  const hexPart = match[2].trim();
+  const asciiPart = match[3];
+  const hexStart = prefix.length;
+  const pipePos = line.indexOf("|", hexStart);
+  const asciiStart = pipePos >= 0 ? pipePos + 1 : 0;
+  const byteCount = hexPart.split(/\s+/).filter(Boolean).length;
+  return { lineIndex, prefix, hexPart, hexStart, asciiPart, asciiStart, separator: " |", suffix: "|", byteCount };
+}
+
+function renderLineWithHighlights(
+  text: string,
+  highlights: Array<[number, number]>,
+  key: number,
+): { nodes: React.ReactNode[]; nextKey: number } {
+  if (highlights.length === 0) {
+    return { nodes: [text], nextKey: key };
+  }
+  const nodes: React.ReactNode[] = [];
+  let lastPos = 0;
+  let k = key;
+  const sorted = [...highlights].sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const [s, e] of sorted) {
+    if (merged.length > 0 && s <= merged[merged.length - 1][1]) {
+      merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], e);
+    } else {
+      merged.push([s, e]);
+    }
+  }
+  for (const [start, end] of merged) {
+    if (start > lastPos) {
+      nodes.push(text.slice(lastPos, start));
+    }
+    const hlText = text.slice(start, end);
+    const hlNodes = highlightNonSpaces(hlText, k);
+    k += hlNodes.filter(n => typeof n !== "string").length;
+    nodes.push(...hlNodes);
+    lastPos = end;
+  }
+  if (lastPos < text.length) {
+    nodes.push(text.slice(lastPos));
+  }
+  return { nodes, nextKey: k };
+}
+
+export function highlightHexdump(
+  text: string,
+  query: string,
+  caseSensitive: boolean,
+  fuzzy: boolean = false,
+): React.ReactNode {
+  if (!text || !query) return text;
+
+  const lines = text.split("\n");
+  const parsed: Array<{ type: "hex"; data: HexdumpLine } | { type: "text"; line: string; lineIndex: number }> = [];
+  const hexLines: HexdumpLine[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const hd = parseHexdumpLine(lines[i], i);
+    if (hd) {
+      parsed.push({ type: "hex", data: hd });
+      hexLines.push(hd);
+    } else {
+      parsed.push({ type: "text", line: lines[i], lineIndex: i });
+    }
+  }
+
+  if (hexLines.length === 0) {
+    return highlightText(text, query, caseSensitive, fuzzy);
+  }
+
+  const hexStreamParts: string[] = [];
+  const byteMap: Array<{ lineIdx: number; localByteIdx: number }> = [];
+  let asciiStream = "";
+  const asciiMap: Array<{ lineIdx: number; localCharIdx: number }> = [];
+
+  for (let li = 0; li < hexLines.length; li++) {
+    const hl = hexLines[li];
+    const bytes = hl.hexPart.split(/\s+/).filter(Boolean);
+    for (let bi = 0; bi < bytes.length; bi++) {
+      byteMap.push({ lineIdx: li, localByteIdx: bi });
+    }
+    hexStreamParts.push(bytes.join(" "));
+    for (let ci = 0; ci < hl.asciiPart.length; ci++) {
+      asciiMap.push({ lineIdx: li, localCharIdx: ci });
+    }
+    asciiStream += hl.asciiPart;
+  }
+
+  const hexStream = hexStreamParts.join(" ");
+  const hexHighlights: Map<number, Array<[number, number]>> = new Map();
+  const asciiHighlights: Map<number, Array<[number, number]>> = new Map();
+
+  let matchQuery = query;
+  let matchInHex = false;
+
+  if (isSpacedHex(query)) {
+    matchInHex = true;
+    matchQuery = query;
+  } else if (isCompactHex(query)) {
+    matchInHex = true;
+    matchQuery = compactToSpaced(query);
+  }
+
+  if (matchInHex) {
+    const escaped = matchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const flags = caseSensitive ? "g" : "gi";
+    let regex: RegExp;
+    try { regex = new RegExp(escaped, flags); } catch { return highlightText(text, query, caseSensitive, fuzzy); }
+
+    regex.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(hexStream)) !== null) {
+      if (m[0].length === 0) { regex.lastIndex++; continue; }
+      const startCharPos = m.index;
+      const endCharPos = m.index + m[0].length;
+      const startByteIdx = Math.floor(startCharPos / 3);
+      const endByteIdx = Math.ceil(endCharPos / 3);
+
+      for (let bi = startByteIdx; bi < endByteIdx && bi < byteMap.length; bi++) {
+        const { lineIdx, localByteIdx } = byteMap[bi];
+        const hl = hexLines[lineIdx];
+        const byteCharStart = localByteIdx * 3;
+        const byteCharEnd = byteCharStart + 2;
+        const absStart = hl.hexStart + byteCharStart;
+        const absEnd = hl.hexStart + byteCharEnd;
+        if (!hexHighlights.has(lineIdx)) hexHighlights.set(lineIdx, []);
+        hexHighlights.get(lineIdx)!.push([absStart, absEnd]);
+      }
+    }
+  } else {
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const flags = caseSensitive ? "g" : "gi";
+    let regex: RegExp;
+    try { regex = new RegExp(escaped, flags); } catch { return highlightText(text, query, caseSensitive, fuzzy); }
+
+    regex.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(asciiStream)) !== null) {
+      if (m[0].length === 0) { regex.lastIndex++; continue; }
+      const startIdx = m.index;
+      const endIdx = m.index + m[0].length;
+      for (let ci = startIdx; ci < endIdx && ci < asciiMap.length; ci++) {
+        const { lineIdx, localCharIdx } = asciiMap[ci];
+        const hl = hexLines[lineIdx];
+        const absPos = hl.asciiStart + localCharIdx;
+        if (!asciiHighlights.has(lineIdx)) asciiHighlights.set(lineIdx, []);
+        asciiHighlights.get(lineIdx)!.push([absPos, absPos + 1]);
+      }
+    }
+  }
+
+  const resultNodes: React.ReactNode[] = [];
+  let globalKey = 0;
+
+  for (let pi = 0; pi < parsed.length; pi++) {
+    if (pi > 0) resultNodes.push("\n");
+    const item = parsed[pi];
+    if (item.type === "text") {
+      const highlighted = highlightText(item.line, query, caseSensitive, fuzzy);
+      if (typeof highlighted === "string") {
+        resultNodes.push(highlighted);
+      } else {
+        resultNodes.push(<React.Fragment key={`t${pi}`}>{highlighted}</React.Fragment>);
+      }
+    } else {
+      const lineIdx = hexLines.indexOf(item.data);
+      const hexHL = hexHighlights.get(lineIdx) ?? [];
+      const ascHL = asciiHighlights.get(lineIdx) ?? [];
+      const allHL = [...hexHL, ...ascHL];
+      if (allHL.length === 0) {
+        resultNodes.push(lines[item.data.lineIndex]);
+      } else {
+        const { nodes, nextKey } = renderLineWithHighlights(lines[item.data.lineIndex], allHL, globalKey);
+        globalKey = nextKey;
+        resultNodes.push(<React.Fragment key={`h${pi}`}>{nodes}</React.Fragment>);
+      }
+    }
+  }
+
+  return <>{resultNodes}</>;
+}
