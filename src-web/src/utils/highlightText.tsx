@@ -181,6 +181,7 @@ export function highlightHexdump(
   query: string,
   caseSensitive: boolean,
   fuzzy: boolean = false,
+  useRegex: boolean = false,
 ): React.ReactNode {
   if (!text || !query) return text;
 
@@ -199,7 +200,7 @@ export function highlightHexdump(
   }
 
   if (hexLines.length === 0) {
-    return highlightText(text, query, caseSensitive, fuzzy);
+    return highlightText(text, query, caseSensitive, fuzzy, useRegex);
   }
 
   const hexStreamParts: string[] = [];
@@ -224,6 +225,23 @@ export function highlightHexdump(
   const hexHighlights: Map<number, Array<[number, number]>> = new Map();
   const asciiHighlights: Map<number, Array<[number, number]>> = new Map();
 
+  // 正则模式或 /pattern/ 模式：每行独立做正则高亮，不走 hex/ASCII 流跨行匹配
+  if (useRegex || (query.startsWith("/") && query.endsWith("/") && query.length > 2)) {
+    const resultNodes: React.ReactNode[] = [];
+    for (let pi = 0; pi < parsed.length; pi++) {
+      if (pi > 0) resultNodes.push("\n");
+      const item = parsed[pi];
+      const line = item.type === "text" ? item.line : lines[item.data.lineIndex];
+      const highlighted = highlightText(line, query, caseSensitive, fuzzy, useRegex);
+      if (typeof highlighted === "string") {
+        resultNodes.push(highlighted);
+      } else {
+        resultNodes.push(<React.Fragment key={`r${pi}`}>{highlighted}</React.Fragment>);
+      }
+    }
+    return <>{resultNodes}</>;
+  }
+
   let matchQuery = query;
   let matchInHex = false;
 
@@ -239,7 +257,7 @@ export function highlightHexdump(
     const escaped = matchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const flags = caseSensitive ? "g" : "gi";
     let regex: RegExp;
-    try { regex = new RegExp(escaped, flags); } catch { return highlightText(text, query, caseSensitive, fuzzy); }
+    try { regex = new RegExp(escaped, flags); } catch { return highlightText(text, query, caseSensitive, fuzzy, useRegex); }
 
     regex.lastIndex = 0;
     let m: RegExpExecArray | null;
@@ -265,7 +283,7 @@ export function highlightHexdump(
     const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const flags = caseSensitive ? "g" : "gi";
     let regex: RegExp;
-    try { regex = new RegExp(escaped, flags); } catch { return highlightText(text, query, caseSensitive, fuzzy); }
+    try { regex = new RegExp(escaped, flags); } catch { return highlightText(text, query, caseSensitive, fuzzy, useRegex); }
 
     regex.lastIndex = 0;
     let m: RegExpExecArray | null;

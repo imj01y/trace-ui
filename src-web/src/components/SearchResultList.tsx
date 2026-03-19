@@ -349,7 +349,7 @@ export default function SearchResultList({
                         boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
                       }}>
                         {match.hidden_content
-                          ? highlightHexdump(match.hidden_content, searchQuery ?? "", caseSensitive ?? false, fuzzy ?? false)
+                          ? highlightHexdump(match.hidden_content, searchQuery ?? "", caseSensitive ?? false, fuzzy ?? false, useRegex ?? false)
                           : ""}
                       </div>
                     </div>
