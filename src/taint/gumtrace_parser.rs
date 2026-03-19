@@ -92,6 +92,9 @@ impl CallAnnotation {
         if !hex_str.is_empty() {
             text.push('\n');
             text.push_str(&hex_str);
+            // 追加无空格 hex（支持紧凑 hex 搜索如 "da487d00000029"）
+            text.push('\n');
+            text.push_str(&hex_str.replace(" ", ""));
             // 追加连续 ASCII 表示（可打印字符保留，不可打印用 . 替换）
             let ascii: String = raw_bytes.iter().map(|&b| {
                 if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' }
