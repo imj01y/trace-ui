@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useVirtualizerNoSync } from "../hooks/useVirtualizerNoSync";
+import { useResizableColumn } from "../hooks/useResizableColumn";
 import ContextMenu, { ContextMenuItem } from "./ContextMenu";
 import type { StringRecordDto, StringsResult, StringXRef } from "../types/trace";
 
@@ -20,6 +21,17 @@ interface Props {
 }
 
 export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq, stringsScanning }: Props) {
+  const seqCol = useResizableColumn(70, "right", 40, "strings:seq");
+  const addrCol = useResizableColumn(110, "right", 50, "strings:addr");
+  const encCol = useResizableColumn(56, "left", 30, "strings:enc");
+  const lenCol = useResizableColumn(44, "left", 30, "strings:len");
+  const xrefsCol = useResizableColumn(56, "left", 30, "strings:xrefs");
+
+  const HANDLE_STYLE: React.CSSProperties = {
+    width: 8, cursor: "col-resize", flexShrink: 0,
+    display: "flex", alignItems: "center", justifyContent: "center",
+  };
+
   const [strings, setStrings] = useState<StringRecordDto[]>([]);
   const [total, setTotal] = useState(0);
   const [minLen, setMinLen] = useState(4);
@@ -341,12 +353,17 @@ export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq, st
         borderBottom: "1px solid var(--border-color)",
         fontSize: "var(--font-size-sm)", color: "var(--text-secondary)", flexShrink: 0,
       }}>
-        <span style={{ width: 70, flexShrink: 0 }}>Seq</span>
-        <span style={{ width: 110, flexShrink: 0 }}>Address</span>
+        <span style={{ width: seqCol.width, flexShrink: 0 }}>Seq</span>
+        <div onMouseDown={seqCol.onMouseDown} style={HANDLE_STYLE} />
+        <span style={{ width: addrCol.width, flexShrink: 0 }}>Address</span>
+        <div onMouseDown={addrCol.onMouseDown} style={HANDLE_STYLE} />
         <span style={{ flex: 1 }}>Content</span>
-        <span style={{ width: 56, flexShrink: 0 }}>Enc</span>
-        <span style={{ width: 44, flexShrink: 0 }}>Len</span>
-        <span style={{ width: 56, flexShrink: 0 }}>XRefs</span>
+        <div onMouseDown={encCol.onMouseDown} style={HANDLE_STYLE} />
+        <span style={{ width: encCol.width, flexShrink: 0 }}>Enc</span>
+        <div onMouseDown={lenCol.onMouseDown} style={HANDLE_STYLE} />
+        <span style={{ width: lenCol.width, flexShrink: 0 }}>Len</span>
+        <div onMouseDown={xrefsCol.onMouseDown} style={HANDLE_STYLE} />
+        <span style={{ width: xrefsCol.width, flexShrink: 0 }}>XRefs</span>
       </div>
 
       {/* 虚拟滚动列表 */}
@@ -375,15 +392,20 @@ export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq, st
                 onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "var(--bg-hover)"; }}
                 onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = virtualRow.index % 2 === 0 ? "var(--bg-row-even)" : "var(--bg-row-odd)"; }}
               >
-                <span style={{ width: 70, flexShrink: 0, color: "var(--syntax-number)" }}>{record.seq + 1}</span>
-                <span style={{ width: 110, flexShrink: 0, color: "var(--syntax-literal)" }}>{record.addr}</span>
+                <span style={{ width: seqCol.width, flexShrink: 0, color: "var(--syntax-number)" }}>{record.seq + 1}</span>
+                <span style={{ width: 8, flexShrink: 0 }} />
+                <span style={{ width: addrCol.width, flexShrink: 0, color: "var(--syntax-literal)" }}>{record.addr}</span>
+                <span style={{ width: 8, flexShrink: 0 }} />
                 <span style={{
                   flex: 1, color: "var(--syntax-string)",
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                 }}>"{record.content}"</span>
-                <span style={{ width: 56, flexShrink: 0, color: "var(--text-secondary)" }}>{record.encoding}</span>
-                <span style={{ width: 44, flexShrink: 0 }}>{record.byte_len}</span>
-                <span style={{ width: 56, flexShrink: 0, color: record.xref_count > 0 ? "var(--syntax-keyword)" : "var(--text-secondary)" }}>
+                <span style={{ width: 8, flexShrink: 0 }} />
+                <span style={{ width: encCol.width, flexShrink: 0, color: "var(--text-secondary)" }}>{record.encoding}</span>
+                <span style={{ width: 8, flexShrink: 0 }} />
+                <span style={{ width: lenCol.width, flexShrink: 0 }}>{record.byte_len}</span>
+                <span style={{ width: 8, flexShrink: 0 }} />
+                <span style={{ width: xrefsCol.width, flexShrink: 0, color: record.xref_count > 0 ? "var(--syntax-keyword)" : "var(--text-secondary)" }}>
                   {record.xref_count}
                 </span>
               </div>
