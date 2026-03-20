@@ -76,9 +76,7 @@ pub fn build_tree(view: &ScanView, start_index: u32, data_only: bool) -> Depende
         }
     }
 
-    let mut ancestors = HashSet::new();
-    let mut expanded = HashSet::new();
-    build_node(root_line, &children_map, 0, &mut ancestors, &mut expanded)
+    build_node_iterative(root_line, &children_map)
 }
 
 fn collect_deps(raw: u32, view: &ScanView, data_only: bool) -> Vec<u32> {
@@ -126,58 +124,139 @@ fn collect_deps(raw: u32, view: &ScanView, data_only: bool) -> Vec<u32> {
     deps
 }
 
-fn build_node(
-    line: u32,
+/// 迭代式 DFS 构建依赖树，避免栈溢出
+fn build_node_iterative(
+    root_line: u32,
     children_map: &HashMap<u32, Vec<u32>>,
-    depth: u32,
-    ancestors: &mut HashSet<u32>,
-    expanded: &mut HashSet<u32>,
 ) -> DependencyNode {
-    // 如果该节点已在其他分支展开过，返回引用占位符
-    if expanded.contains(&line) {
-        return DependencyNode {
-            seq: line,
-            expression: String::new(),
-            operation: String::new(),
-            children: vec![],
-            is_leaf: false,
-            is_ref: true,
-            value: None,
-            depth,
-        };
+    // 每个栈帧：当前节点信息 + 待处理的子节点 + 已构建的子节点
+    struct Frame {
+        line: u32,
+        depth: u32,
+        children: Vec<u32>, // 待处理的子节点列表
+        cursor: usize,      // 下一个待处理的子节点索引
+        built_children: Vec<DependencyNode>,
     }
 
-    expanded.insert(line);
+    let mut expanded: HashSet<u32> = HashSet::new();
+    let mut ancestors: HashSet<u32> = HashSet::new();
 
-    let child_lines = children_map.get(&line).cloned().unwrap_or_default();
-
-    ancestors.insert(line);
-    let valid_children: Vec<u32> = child_lines
-        .iter()
-        .copied()
-        .filter(|child_line| !ancestors.contains(child_line))
+    // 初始化根节点
+    expanded.insert(root_line);
+    ancestors.insert(root_line);
+    let root_children: Vec<u32> = children_map
+        .get(&root_line)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|c| !ancestors.contains(c))
         .collect();
-    let children: Vec<DependencyNode> = valid_children
-        .iter()
-        .map(|&child_line| build_node(child_line, children_map, depth + 1, ancestors, expanded))
-        .collect();
-    ancestors.remove(&line);
 
-    let is_leaf = children.is_empty();
+    let mut stack = vec![Frame {
+        line: root_line,
+        depth: 0,
+        children: root_children,
+        cursor: 0,
+        built_children: Vec::new(),
+    }];
 
-    DependencyNode {
-        seq: line,
-        expression: String::new(),
-        operation: String::new(),
-        children,
-        is_leaf,
-        is_ref: false,
-        value: None,
-        depth,
+    loop {
+        // 取栈顶帧，检查是否还有子节点需要处理
+        let has_next_child = {
+            let frame = stack.last().unwrap();
+            frame.cursor < frame.children.len()
+        };
+
+        if has_next_child {
+            let (child_line, parent_depth) = {
+                let frame = stack.last_mut().unwrap();
+                let child_line = frame.children[frame.cursor];
+                frame.cursor += 1;
+                (child_line, frame.depth)
+            };
+
+            let child_depth = parent_depth + 1;
+
+            if expanded.contains(&child_line) {
+                // 已在其他分支展开过 → 引用占位符
+                let ref_node = DependencyNode {
+                    seq: child_line,
+                    expression: String::new(),
+                    operation: String::new(),
+                    children: vec![],
+                    is_leaf: false,
+                    is_ref: true,
+                    value: None,
+                    depth: child_depth,
+                };
+                stack.last_mut().unwrap().built_children.push(ref_node);
+            } else {
+                // 首次展开：压入新栈帧
+                expanded.insert(child_line);
+                ancestors.insert(child_line);
+                let grandchildren: Vec<u32> = children_map
+                    .get(&child_line)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|c| !ancestors.contains(c))
+                    .collect();
+
+                stack.push(Frame {
+                    line: child_line,
+                    depth: child_depth,
+                    children: grandchildren,
+                    cursor: 0,
+                    built_children: Vec::new(),
+                });
+            }
+        } else {
+            // 所有子节点已处理完毕 → 构建当前节点并弹出
+            let frame = stack.pop().unwrap();
+            ancestors.remove(&frame.line);
+
+            let is_leaf = frame.built_children.is_empty();
+            let node = DependencyNode {
+                seq: frame.line,
+                expression: String::new(),
+                operation: String::new(),
+                children: frame.built_children,
+                is_leaf,
+                is_ref: false,
+                value: None,
+                depth: frame.depth,
+            };
+
+            if stack.is_empty() {
+                return node; // 根节点，返回完整树
+            } else {
+                stack.last_mut().unwrap().built_children.push(node);
+            }
+        }
     }
 }
 
+/// 迭代式填充所有节点的 expression / operation / value 字段
 pub fn populate_node_info(
+    root: &mut DependencyNode,
+    mmap: &[u8],
+    line_index: &LineIndexView,
+    format: TraceFormat,
+) {
+    // 使用显式栈代替递归，避免深层树导致栈溢出。
+    // 使用裸指针遍历树：每个节点只访问一次且互不重叠，安全性由树结构保证。
+    let mut stack: Vec<*mut DependencyNode> = vec![root as *mut _];
+    while let Some(ptr) = stack.pop() {
+        // SAFETY: 树结构保证每个节点只被访问一次，不存在别名
+        let node = unsafe { &mut *ptr };
+        fill_single_node(node, mmap, line_index, format);
+        for child in node.children.iter_mut() {
+            stack.push(child as *mut _);
+        }
+    }
+}
+
+fn fill_single_node(
     node: &mut DependencyNode,
     mmap: &[u8],
     line_index: &LineIndexView,
@@ -194,8 +273,16 @@ pub fn populate_node_info(
                 let (defs, uses) = determine_def_use(cls, p);
                 node.operation = p.mnemonic.to_string();
 
-                let def_str = defs.iter().map(|r| format!("{:?}", r)).collect::<Vec<_>>().join(", ");
-                let use_str = uses.iter().map(|r| format!("{:?}", r)).collect::<Vec<_>>().join(", ");
+                let def_str = defs
+                    .iter()
+                    .map(|r| format!("{:?}", r))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let use_str = uses
+                    .iter()
+                    .map(|r| format!("{:?}", r))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 let changes = extract_changes(line_str);
 
                 if p.mem_op.is_some() {
@@ -219,9 +306,6 @@ pub fn populate_node_info(
                 node.operation = "unknown".to_string();
             }
         }
-    }
-    for child in &mut node.children {
-        populate_node_info(child, mmap, line_index, format);
     }
 }
 
