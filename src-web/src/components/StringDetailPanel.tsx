@@ -1,9 +1,20 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { useFloatingWindowInit } from "../hooks/useFloatingWindowInit";
+import { emit, listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { StringRecordDto } from "../types/trace";
 
 export default function StringDetailPanel() {
-  const record = useFloatingWindowInit<StringRecordDto>("string-detail");
+  const [record, setRecord] = useState<StringRecordDto | null>(null);
+
+  // 事件方案：先注册数据监听，再发送 ready 信号
+  useEffect(() => {
+    const unlisten = listen<StringRecordDto>("string-detail:init-data", (e) => {
+      setRecord(e.payload);
+    });
+    const winLabel = getCurrentWindow().label;
+    emit(`string-detail:ready:${winLabel}`);
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
   const [mode, setMode] = useState<"text" | "hex">("hex");
   const [highlight, setHighlight] = useState<Set<number>>(new Set());
   const [selecting, setSelecting] = useState(false);

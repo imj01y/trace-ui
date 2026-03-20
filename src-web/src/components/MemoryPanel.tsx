@@ -2,8 +2,6 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useVirtualizerNoSync } from "../hooks/useVirtualizerNoSync";
-import { useSearchHistory } from "../hooks/useSearchHistory";
-import { cleanupListener } from "../utils/tauriEvents";
 import type { MemorySnapshot, TraceLine } from "../types/trace";
 import { useSelectedSeq } from "../stores/selectedSeqStore";
 import type { ResolvedRow } from "../hooks/useFoldState";
@@ -34,6 +32,8 @@ const BYTES_PER_LINE = 16;
 const DEFAULT_LENGTH = 1024;
 const HISTORY_ROW_HEIGHT = 20;
 const HEX_ROW_HEIGHT = 20;
+const ADDR_HISTORY_KEY = "memory-addr-search-history";
+const MAX_ADDR_HISTORY = 20;
 
 function formatHexByte(byte: number): string {
   return byte.toString(16).padStart(2, "0").toUpperCase();
@@ -80,12 +80,11 @@ export default function MemoryPanel({ selectedSeq: selectedSeqProp, isPhase2Read
   const historyRef = useRef<HTMLDivElement>(null);
 
   // ── 地址搜索历史 ──
-  const {
-    showHistory: showAddrHistory, setShowHistory: setShowAddrHistory,
-    wrapperRef: addrInputWrapperRef,
-    addToHistory: addAddrToHistory, removeHistoryItem: removeAddrHistoryItem,
-    clearAllHistory: clearAllAddrHistory, getFilteredHistory: getFilteredAddrHistory,
-  } = useSearchHistory({ storageKey: "memory-addr-search-history" });
+  const [addrHistory, setAddrHistory] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(ADDR_HISTORY_KEY) || "[]"); } catch { return []; }
+  });
+  const [showAddrHistory, setShowAddrHistory] = useState(false);
+  const addrInputWrapperRef = useRef<HTMLDivElement>(null);
 
 
   // hex dump 容器高度裁剪到行高整数倍，避免部分行露出
@@ -138,7 +137,7 @@ export default function MemoryPanel({ selectedSeq: selectedSeqProp, isPhase2Read
       setCurrentAddr(`0x${aligned.toString(16)}`);
       setInputAddr(e.payload.addr);
     });
-    return () => { cleanupListener(unlisten); };
+    return () => { unlisten.then(fn => fn()); };
   }, []);
 
   // auto-track 时更新 currentAddr，让访问地址出现在第一行
@@ -278,7 +277,43 @@ export default function MemoryPanel({ selectedSeq: selectedSeqProp, isPhase2Read
     })) as unknown as TraceLine[];
   }, [history]);
 
-  const filteredAddrHistory = getFilteredAddrHistory(inputAddr);
+  // ── 地址搜索历史：点击外部关闭 ──
+  useEffect(() => {
+    if (!showAddrHistory) return;
+    const handler = (e: MouseEvent) => {
+      if (addrInputWrapperRef.current && !addrInputWrapperRef.current.contains(e.target as Node)) {
+        setShowAddrHistory(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showAddrHistory]);
+
+  const removeAddrHistoryItem = useCallback((item: string) => {
+    setAddrHistory(prev => {
+      const next = prev.filter(h => h !== item);
+      localStorage.setItem(ADDR_HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const clearAllAddrHistory = useCallback(() => {
+    setAddrHistory([]);
+    localStorage.removeItem(ADDR_HISTORY_KEY);
+    setShowAddrHistory(false);
+  }, []);
+
+  const addAddrToHistory = useCallback((addr: string) => {
+    setAddrHistory(prev => {
+      const next = [addr, ...prev.filter(h => h !== addr)].slice(0, MAX_ADDR_HISTORY);
+      localStorage.setItem(ADDR_HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const filteredAddrHistory = inputAddr.trim()
+    ? addrHistory.filter(h => h !== inputAddr.trim() && h.toLowerCase().includes(inputAddr.toLowerCase()))
+    : addrHistory;
 
   const handleGo = useCallback(() => {
     const trimmed = inputAddr.trim();

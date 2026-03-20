@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { openUrl, openPath } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -9,8 +9,6 @@ import PreferencesDialog from "./PreferencesDialog";
 import { MenuDropdown, MenuItem, MenuSeparator } from "./MenuDropdown";
 import ContextMenu, { ContextMenuItem } from "./ContextMenu";
 import type { Preferences } from "../hooks/usePreferences";
-import { useSearchHistory } from "../hooks/useSearchHistory";
-import { cleanupListener } from "../utils/tauriEvents";
 import { isMac, modKey } from "../utils/platform";
 import { HIGHLIGHT_COLORS } from "../utils/highlightColors";
 import { useHasSelectedSeq } from "../stores/selectedSeqStore";
@@ -32,6 +30,8 @@ interface Props {
   onScanStrings: () => void;
   hasStringIndex: boolean;
   stringsScanning: boolean;
+  onScanCrypto: () => void;
+  cryptoScanning: boolean;
   isPhase2Ready: boolean;
   onSaveTaintResults: () => void;
   // Highlight & Hide
@@ -51,7 +51,7 @@ interface Props {
   regSelected?: boolean;
 }
 
-export default function TitleBar({ onOpenFile, onCloseFile, onRebuildIndex, onSearch, isLoaded, recentFiles, onRemoveRecent, onGoBack, onGoForward, preferences, onUpdatePreferences, onTaintAnalysis, onScanStrings, hasStringIndex, stringsScanning, isPhase2Ready, onSaveTaintResults, onHighlight, onStrikethrough, onResetHighlight, onHide, sliceActive, sliceFilterMode, sliceInfo, onTaintFilterModeChange, onTaintClear, onTaintGoToSource, onTaintReconfigure, onClearCache, regSelected }: Props) {
+export default function TitleBar({ onOpenFile, onCloseFile, onRebuildIndex, onSearch, isLoaded, recentFiles, onRemoveRecent, onGoBack, onGoForward, preferences, onUpdatePreferences, onTaintAnalysis, onScanStrings, hasStringIndex, stringsScanning, onScanCrypto, cryptoScanning, isPhase2Ready, onSaveTaintResults, onHighlight, onStrikethrough, onResetHighlight, onHide, sliceActive, sliceFilterMode, sliceInfo, onTaintFilterModeChange, onTaintClear, onTaintGoToSource, onTaintReconfigure, onClearCache, regSelected }: Props) {
   const hasSelectedSeq = useHasSelectedSeq();
   const canGoBack = useCanGoBack();
   const canGoForward = useCanGoForward();
@@ -66,7 +66,7 @@ export default function TitleBar({ onOpenFile, onCloseFile, onRebuildIndex, onSe
     const unlisten = win.onResized(() => {
       win.isFullscreen().then(setIsFullscreen).catch(() => {});
     });
-    return () => { cleanupListener(unlisten); };
+    return () => { unlisten.then(fn => fn()); };
   }, []);
 
   const [manualPath, setManualPath] = useState("");
@@ -90,19 +90,57 @@ export default function TitleBar({ onOpenFile, onCloseFile, onRebuildIndex, onSe
   const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
   const [showClearCacheConfirm, setShowClearCacheConfirm] = useState(false);
   const [showScanStringsConfirm, setShowScanStringsConfirm] = useState(false);
+  const [showScanCryptoConfirm, setShowScanCryptoConfirm] = useState(false);
   const [recentHover, setRecentHover] = useState(false);
   const [highlightHover, setHighlightHover] = useState(false);
   const [recentCtxMenu, setRecentCtxMenu] = useState<{ path: string; x: number; y: number } | null>(null);
 
   // ── 搜索历史 ──
-  const {
-    showHistory: showSearchHistory, setShowHistory: setShowSearchHistory,
-    wrapperRef: searchWrapperRef,
-    addToHistory: addSearchHistory, removeHistoryItem: removeSearchHistoryItem,
-    clearAllHistory: clearAllSearchHistory, getFilteredHistory,
-  } = useSearchHistory({ storageKey: "titlebar-search-history" });
+  const SEARCH_HISTORY_KEY = "titlebar-search-history";
+  const MAX_SEARCH_HISTORY = 20;
+  const [searchHistoryList, setSearchHistoryList] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY) || "[]"); } catch { return []; }
+  });
+  const [showSearchHistory, setShowSearchHistory] = useState(false);
+  const searchWrapperRef = useRef<HTMLDivElement>(null);
 
-  const filteredSearchHistory = getFilteredHistory(searchInput);
+  useEffect(() => {
+    if (!showSearchHistory) return;
+    const handler = (e: MouseEvent) => {
+      if (searchWrapperRef.current && !searchWrapperRef.current.contains(e.target as Node)) {
+        setShowSearchHistory(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showSearchHistory]);
+
+  const addSearchHistory = useCallback((query: string) => {
+    if (!query.trim()) return;
+    setSearchHistoryList(prev => {
+      const next = [query.trim(), ...prev.filter(h => h !== query.trim())].slice(0, MAX_SEARCH_HISTORY);
+      localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const removeSearchHistoryItem = useCallback((item: string) => {
+    setSearchHistoryList(prev => {
+      const next = prev.filter(h => h !== item);
+      localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const clearAllSearchHistory = useCallback(() => {
+    setSearchHistoryList([]);
+    localStorage.removeItem(SEARCH_HISTORY_KEY);
+    setShowSearchHistory(false);
+  }, []);
+
+  const filteredSearchHistory = searchInput.trim()
+    ? searchHistoryList.filter(h => h !== searchInput.trim() && h.toLowerCase().includes(searchInput.toLowerCase()))
+    : searchHistoryList;
 
   const handleOpen = useCallback(async () => {
     try {
@@ -304,6 +342,11 @@ export default function TitleBar({ onOpenFile, onCloseFile, onRebuildIndex, onSe
               label={hasStringIndex ? "Rescan Strings" : "Scan Strings"}
               disabled={!isLoaded || !isPhase2Ready || stringsScanning}
               onClick={() => setShowScanStringsConfirm(true)}
+          />
+          <MenuItem
+              label="Scan Crypto"
+              disabled={!isLoaded || cryptoScanning}
+              onClick={() => setShowScanCryptoConfirm(true)}
           />
           <MenuSeparator />
           <MenuItem label="Rebuild Index" disabled={!isLoaded} onClick={() => setShowRebuildConfirm(true)} />
@@ -600,6 +643,19 @@ export default function TitleBar({ onOpenFile, onCloseFile, onRebuildIndex, onSe
             minWidth={360}
             onConfirm={() => { setShowScanStringsConfirm(false); onScanStrings(); }}
             onCancel={() => setShowScanStringsConfirm(false)}
+        />
+      )}
+
+      {/* Scan Crypto 确认对话框 */}
+      {showScanCryptoConfirm && (
+        <ConfirmDialog
+            title="Scan Crypto"
+            message="Scan trace for known cryptographic algorithm constants (MD5, SHA, AES, etc.)?"
+            confirmText="Scan"
+            cancelText="Cancel"
+            minWidth={360}
+            onConfirm={() => { setShowScanCryptoConfirm(false); onScanCrypto(); }}
+            onCancel={() => setShowScanCryptoConfirm(false)}
         />
       )}
 

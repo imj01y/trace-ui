@@ -1,16 +1,16 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { cleanupListener } from "../utils/tauriEvents";
 import { openDepTreeWindow } from "../utils/openDepTreeWindow";
 import { useDragToFloat } from "../hooks/useDragToFloat";
-import type { SearchMatch, SliceResult } from "../types/trace";
+import type { SearchMatch, SliceResult, CryptoScanResult } from "../types/trace";
 import MemoryPanel from "./MemoryPanel";
 import SearchResultList from "./SearchResultList";
 import SearchBar, { SearchOptions } from "./SearchBar";
 import StringsPanel from "./StringsPanel";
+import CryptoPanel from "./CryptoPanel";
 
-const TABS = ["Memory", "Accesses", "Taint State", "Search", "Strings"] as const;
+const TABS = ["Memory", "Accesses", "Taint State", "Search", "Strings", "Crypto"] as const;
 type TabName = typeof TABS[number];
 
 function DepTreeFromSliceButton({ sessionId }: { sessionId: string | null }) {
@@ -45,6 +45,7 @@ const TAB_TO_PANEL: Record<string, string> = {
   "Taint State": "taint-state",
   "Search": "search",
   "Strings": "strings",
+  "Crypto": "crypto",
 };
 
 interface Props {
@@ -66,6 +67,8 @@ interface Props {
   sliceDuration: number | null;
   sliceError: string | null;
   stringsScanning?: boolean;
+  cryptoResults: CryptoScanResult | null;
+  cryptoScanning: boolean;
   onSearch: (query: string, options: SearchOptions) => void;
   showSoName?: boolean;
   showAbsAddress?: boolean;
@@ -79,6 +82,8 @@ export default function TabPanel({
   sliceActive, sliceInfo, sliceFromSpecs,
   isSlicing, sliceDuration, sliceError,
   stringsScanning,
+  cryptoResults,
+  cryptoScanning,
   onSearch,
   showSoName = false,
   showAbsAddress = false,
@@ -107,6 +112,15 @@ export default function TabPanel({
     }
   }, [isSlicing, sliceActive, floatedPanels]);
 
+  // Crypto 扫描完成后自动切换
+  const prevCryptoScanningRef = useRef(false);
+  useEffect(() => {
+    if (prevCryptoScanningRef.current && !cryptoScanning && cryptoResults && !floatedPanels.has("crypto")) {
+      setActive("Crypto");
+    }
+    prevCryptoScanningRef.current = cryptoScanning;
+  }, [cryptoScanning, cryptoResults, floatedPanels]);
+
   // View in Memory：自动切换到 Memory tab（仅在 Memory 未浮动时）
   useEffect(() => {
     const unlisten = listen("action:view-in-memory", () => {
@@ -115,7 +129,7 @@ export default function TabPanel({
         setMemResetKey(k => k + 1);
       }
     });
-    return () => { cleanupListener(unlisten); };
+    return () => { unlisten.then(fn => fn()); };
   }, [floatedPanels]);
 
   // 当前 active tab 被浮动后，自动切到第一个可见 tab
@@ -144,8 +158,8 @@ export default function TabPanel({
       setSearchOptions(e.payload);
     });
     return () => {
-      cleanupListener(unlistenQuery);
-      cleanupListener(unlistenOptions);
+      unlistenQuery.then(fn => fn());
+      unlistenOptions.then(fn => fn());
     };
   }, []);
 
@@ -159,7 +173,7 @@ export default function TabPanel({
         setActive("Search");
       }
     });
-    return () => { cleanupListener(unlisten); };
+    return () => { unlisten.then(fn => fn()); };
   }, [floatedPanels]);
 
   // 监听 search:focus-input 事件（Ctrl+F 时聚焦搜索框）
@@ -170,7 +184,7 @@ export default function TabPanel({
         searchInputRef.current?.select();
       }
     });
-    return () => { cleanupListener(unlisten); };
+    return () => { unlisten.then(fn => fn()); };
   }, [floatedPanels]);
 
   const handlePrevMatch = useCallback(() => {
@@ -360,6 +374,14 @@ export default function TabPanel({
           isPhase2Ready={isPhase2Ready}
           onJumpToSeq={onJumpToSeq}
           stringsScanning={stringsScanning}
+        />
+      </div>
+
+      <div style={tabStyle("Crypto")}>
+        <CryptoPanel
+          cryptoResults={cryptoResults}
+          cryptoScanning={cryptoScanning}
+          onJumpToSeq={onJumpToSeq}
         />
       </div>
 
