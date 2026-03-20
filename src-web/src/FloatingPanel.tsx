@@ -8,6 +8,7 @@ import SearchResultList from "./components/SearchResultList";
 import StringsPanel from "./components/StringsPanel";
 import StringDetailPanel from "./components/StringDetailPanel";
 import StringXRefsPanel from "./components/StringXRefsPanel";
+import DependencyTreePanel from "./components/DependencyTreePanel";
 import { useFloatingWindowInit } from "./hooks/useFloatingWindowInit";
 import { cleanupListeners, cleanupListener } from "./utils/tauriEvents";
 import type { SearchMatch, SearchResult } from "./types/trace";
@@ -23,6 +24,7 @@ const PANEL_TITLES: Record<string, string> = {
   "string-detail": "String Detail",
   "string-xrefs": "XRefs",
   "call-info": "Call Info",
+  "dep-tree": "Dependency Tree",
 };
 
 interface SyncState {
@@ -208,6 +210,8 @@ export default function FloatingPanel({ panel }: { panel: string }) {
         return <StringXRefsPanel />;
       case "call-info":
         return <CallInfoContent />;
+      case "dep-tree":
+        return <DependencyTreePanel />;
       default:
         return (
           <div style={{
