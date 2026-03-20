@@ -12,8 +12,10 @@ import Minimap, { MINIMAP_WIDTH } from "./Minimap";
 import { getSharedColors, getTraceTableColors } from "../utils/canvasColors";
 import { HIGHLIGHT_COLORS } from "../utils/highlightColors";
 import ContextMenu, { ContextMenuItem, ContextMenuSeparator } from "./ContextMenu";
+import { MenuDropdown, MenuItem } from "./MenuDropdown";
 import { useSelectedSeq } from "../stores/selectedSeqStore";
 import { useThemeId } from "../stores/themeStore";
+import type { Preferences } from "../hooks/usePreferences";
 
 const ROW_HEIGHT = 22;
 const ARROW_COL_WIDTH = 20;
@@ -104,6 +106,8 @@ interface Props {
   scrollTrigger?: number;
   consumedSeqs?: number[];
   autoExpandCallInfoRequest?: { seq: number; nonce: number } | null;
+  preferences: Preferences;
+  updatePreferences: (updates: Partial<Preferences>) => void;
 }
 
 interface ArrowState {
@@ -159,6 +163,8 @@ export default function TraceTable({
   scrollTrigger = 0,
   consumedSeqs,
   autoExpandCallInfoRequest = null,
+  preferences,
+  updatePreferences,
 }: Props) {
   const selectedSeqFromStore = useSelectedSeq();
   const selectedSeq = selectedSeqProp !== undefined ? selectedSeqProp : selectedSeqFromStore;
@@ -183,9 +189,25 @@ export default function TraceTable({
   }
 
   const seqCol = useResizableColumn(DEFAULT_SEQ_WIDTH, "right", 50);
-  const addrCol = useResizableColumn(DEFAULT_ADDR_WIDTH, "right", 50);
+  const addrCol = useResizableColumn(DEFAULT_ADDR_WIDTH, "right", 50, "addr");
   const disasmCol = useResizableColumn(320, "right", 200);
   const regBeforeCol = useResizableColumn(420, "right", 40);
+
+  const handleToggleSoName = useCallback(() => {
+    const next = !preferences.showSoName;
+    updatePreferences({
+      showSoName: next,
+      ...(next ? {} : { showAbsAddress: false }),
+    });
+    addrCol.setWidth(next ? 250 : 90);
+  }, [preferences.showSoName, updatePreferences]);
+
+  const handleToggleAbsAddress = useCallback(() => {
+    if (!preferences.showSoName) return;
+    const next = !preferences.showAbsAddress;
+    updatePreferences({ showAbsAddress: next });
+    addrCol.setWidth(next ? 380 : 250);
+  }, [preferences.showSoName, preferences.showAbsAddress, updatePreferences]);
 
   // 动态列位置（每个拖动手柄占 8px）
   const HANDLE_W = 8;
@@ -1900,9 +1922,28 @@ export default function TraceTable({
       }
 
       // Address
-      if (line.address) {
+      if (line.address || line.so_offset) {
+        let curX = COL_ADDR;
+
+        if (preferences.showSoName && line.so_name) {
+          const soText = `[${line.so_name}] `;
+          ctx.fillStyle = COLORS.textSoName;
+          ctx.fillText(soText, curX, textY);
+          curX += ctx.measureText(soText).width;
+        }
+
+        if (preferences.showAbsAddress && line.address) {
+          ctx.fillStyle = COLORS.textAbsAddress;
+          ctx.fillText(line.address, curX, textY);
+          curX += ctx.measureText(line.address).width;
+          ctx.fillStyle = COLORS.textAddress;
+          ctx.fillText("!", curX, textY);
+          curX += ctx.measureText("!").width;
+        }
+
+        const offsetText = line.so_offset || line.address;
         ctx.fillStyle = COLORS.textAddress;
-        ctx.fillText(line.address, COL_ADDR, textY);
+        ctx.fillText(offsetText, curX, textY);
       }
 
       // Disasm（语法高亮 + hitbox）
@@ -2277,7 +2318,7 @@ export default function TraceTable({
       visibleLines, selectedSeq, arrowState, effectiveChangesWidth, effectiveDisasmWidth, effectiveBeforeWidth, fontReady,
       blLineMap, isFolded, finalSeqToVirtualIndex, toggleFold, multiSelect, ctrlSelect, highlights,
       sliceActive, sliceStatuses, sliceSourceSeq, taintFilterActive,
-      COL_ADDR, COL_DISASM, _themeId]);
+      COL_ADDR, COL_DISASM, _themeId, preferences.showSoName, preferences.showAbsAddress]);
 
   // drawFrame 通过 ref 暴露给 RAF 循环，避免 RAF useEffect 因 drawFrame 重建而重启导致掉帧
   const drawFrameRef = useRef(drawFrame);
@@ -2426,7 +2467,7 @@ export default function TraceTable({
           background: "var(--bg-primary)",
         }}
       >
-        <TableHeader disasmWidth={effectiveDisasmWidth} regBeforeWidth={effectiveBeforeWidth} seqWidth={seqCol.width} addrWidth={addrCol.width} onDisasmResizeMouseDown={disasmCol.onMouseDown} onRegBeforeResizeMouseDown={regBeforeCol.onMouseDown} onSeqResizeMouseDown={seqCol.onMouseDown} onAddrResizeMouseDown={addrCol.onMouseDown} />
+        <TableHeader disasmWidth={effectiveDisasmWidth} regBeforeWidth={effectiveBeforeWidth} seqWidth={seqCol.width} addrWidth={addrCol.width} onDisasmResizeMouseDown={disasmCol.onMouseDown} onRegBeforeResizeMouseDown={regBeforeCol.onMouseDown} onSeqResizeMouseDown={seqCol.onMouseDown} onAddrResizeMouseDown={addrCol.onMouseDown} showSoName={preferences.showSoName} showAbsAddress={preferences.showAbsAddress} onToggleSoName={handleToggleSoName} onToggleAbsAddress={handleToggleAbsAddress} />
         <div
           style={{
             flex: 1,
@@ -2445,7 +2486,7 @@ export default function TraceTable({
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-primary)" }}>
-      <TableHeader disasmWidth={effectiveDisasmWidth} regBeforeWidth={effectiveBeforeWidth} seqWidth={seqCol.width} addrWidth={addrCol.width} onDisasmResizeMouseDown={disasmCol.onMouseDown} onRegBeforeResizeMouseDown={regBeforeCol.onMouseDown} onSeqResizeMouseDown={seqCol.onMouseDown} onAddrResizeMouseDown={addrCol.onMouseDown} />
+      <TableHeader disasmWidth={effectiveDisasmWidth} regBeforeWidth={effectiveBeforeWidth} seqWidth={seqCol.width} addrWidth={addrCol.width} onDisasmResizeMouseDown={disasmCol.onMouseDown} onRegBeforeResizeMouseDown={regBeforeCol.onMouseDown} onSeqResizeMouseDown={seqCol.onMouseDown} onAddrResizeMouseDown={addrCol.onMouseDown} showSoName={preferences.showSoName} showAbsAddress={preferences.showAbsAddress} onToggleSoName={handleToggleSoName} onToggleAbsAddress={handleToggleAbsAddress} />
       <div
         ref={containerRef}
         tabIndex={0}
@@ -2887,6 +2928,10 @@ interface TableHeaderProps {
   onRegBeforeResizeMouseDown: (e: React.MouseEvent) => void;
   onSeqResizeMouseDown: (e: React.MouseEvent) => void;
   onAddrResizeMouseDown: (e: React.MouseEvent) => void;
+  showSoName: boolean;
+  showAbsAddress: boolean;
+  onToggleSoName: () => void;
+  onToggleAbsAddress: () => void;
 }
 
 function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
@@ -2903,7 +2948,7 @@ function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => v
   );
 }
 
-function TableHeader({ disasmWidth, regBeforeWidth, seqWidth, addrWidth, onDisasmResizeMouseDown, onRegBeforeResizeMouseDown, onSeqResizeMouseDown, onAddrResizeMouseDown }: TableHeaderProps) {
+function TableHeader({ disasmWidth, regBeforeWidth, seqWidth, addrWidth, onDisasmResizeMouseDown, onRegBeforeResizeMouseDown, onSeqResizeMouseDown, onAddrResizeMouseDown, showSoName, showAbsAddress, onToggleSoName, onToggleAbsAddress }: TableHeaderProps) {
   return (
     <div
       style={{
@@ -2920,7 +2965,31 @@ function TableHeader({ disasmWidth, regBeforeWidth, seqWidth, addrWidth, onDisas
       <span style={{ width: COL_SEQ - COL_MEMRW, flexShrink: 0 }}></span>
       <span style={{ width: seqWidth, flexShrink: 0 }}>Seq</span>
       <ResizeHandle onMouseDown={onSeqResizeMouseDown} />
-      <span style={{ width: addrWidth, flexShrink: 0 }}>Address</span>
+      <span style={{ width: addrWidth, flexShrink: 0, display: "flex", alignItems: "center" }}>
+        <MenuDropdown
+          label="Address"
+          minWidth={160}
+          closeOnSelect={false}
+          labelStyle={{
+            padding: "0 4px",
+            fontSize: "var(--font-size-sm)",
+            color: "var(--text-secondary)",
+            background: "transparent",
+          }}
+        >
+          <MenuItem
+            label="显示模块名"
+            checked={showSoName}
+            onClick={onToggleSoName}
+          />
+          <MenuItem
+            label="显示绝对地址"
+            checked={showAbsAddress}
+            disabled={!showSoName}
+            onClick={onToggleAbsAddress}
+          />
+        </MenuDropdown>
+      </span>
       <ResizeHandle onMouseDown={onAddrResizeMouseDown} />
       <span style={{ width: disasmWidth, flexShrink: 0 }}>Disassembly</span>
       <ResizeHandle onMouseDown={onDisasmResizeMouseDown} />

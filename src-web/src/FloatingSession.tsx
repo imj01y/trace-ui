@@ -7,6 +7,7 @@ import FloatingWindowFrame from "./components/FloatingWindowFrame";
 import { MenuDropdown, MenuItem, MenuSeparator } from "./components/MenuDropdown";
 import { useFoldState } from "./hooks/useFoldState";
 import { useLineCache } from "./hooks/useLineCache";
+import { usePreferences } from "./hooks/usePreferences";
 import type { CallTreeNodeDto, SliceResult } from "./types/trace";
 
 const PAGE_SIZE = 256;
@@ -25,6 +26,7 @@ export default function FloatingSession({
   sessionId, totalLines: initialTotalLines, fileName, filePath,
   initialTaintActive = false, initialTaintFilterMode = "filter-only", initialTaintSourceSeq,
 }: Props) {
+  const { preferences, updatePreferences } = usePreferences();
   const [totalLines, setTotalLines] = useState(initialTotalLines);
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
   const [isPhase2Ready, setIsPhase2Ready] = useState(false);
@@ -212,6 +214,8 @@ export default function FloatingSession({
           taintedSeqs={taintedSeqs}
           sliceSourceSeq={sliceSourceSeq}
           getSliceStatus={getSliceStatus}
+          preferences={preferences}
+          updatePreferences={updatePreferences}
         />
       </div>
 

@@ -1096,6 +1096,8 @@ function App() {
                     scrollTrigger={scrollTrigger}
                     consumedSeqs={consumedSeqs}
                     autoExpandCallInfoRequest={callInfoExpandRequest}
+                    preferences={preferences}
+                    updatePreferences={updatePreferences}
                   />
                 </div>
               </div>
