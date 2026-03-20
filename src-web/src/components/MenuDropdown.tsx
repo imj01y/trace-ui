@@ -89,13 +89,13 @@ export function MenuDropdown({ label, children, minWidth = 200, labelStyle, clos
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
         style={{
-          padding: "4px 10px",
+          padding: labelStyle?.padding ?? "4px 10px",
           background: btnBackground,
           color: labelStyle?.color ?? "var(--text-primary)",
           border: "none",
           borderRadius: 4,
           cursor: "pointer",
-          fontSize: "var(--font-size-sm)",
+          fontSize: labelStyle?.fontSize ?? "var(--font-size-sm)",
         }}
       >
         {label} ▾

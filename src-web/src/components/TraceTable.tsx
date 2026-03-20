@@ -64,11 +64,24 @@ function canvasTokenColor(token: string, isFirst: boolean): string {
 function lineToTextColumns(
   seq: number,
   line: TraceLine | undefined,
+  showSoName = false,
+  showAbsAddress = false,
 ): { memRW: string; seqText: string; addr: string; disasm: string; regBefore: string; changes: string } {
+  let addr = "";
+  if (line) {
+    const parts: string[] = [];
+    if (showSoName && line.so_name) parts.push(`[${line.so_name}]`);
+    if (showAbsAddress && line.address) {
+      parts.push(`${line.address}!${line.so_offset}`);
+    } else {
+      parts.push(line.so_offset || line.address);
+    }
+    addr = parts.join(" ");
+  }
   return {
     memRW: line?.mem_rw === "W" || line?.mem_rw === "R" ? line.mem_rw : "",
     seqText: String(seq + 1),
-    addr: line?.address ?? "",
+    addr,
     disasm: line?.disasm ?? "",
     regBefore: line?.reg_before ?? "",
     changes: line?.changes ?? "",
@@ -193,21 +206,39 @@ export default function TraceTable({
   const disasmCol = useResizableColumn(320, "right", 200);
   const regBeforeCol = useResizableColumn(420, "right", 40);
 
+  // 根据可见行中最长地址文本估算合适列宽
+  const estimateAddrWidth = useCallback((showSo: boolean, showAbs: boolean) => {
+    const CHAR_W = 7.2; // 12px JetBrains Mono 等宽字符宽度
+    const PAD = 16; // 左右边距
+    let maxLen = 0;
+    for (const line of visibleLines.values()) {
+      let len = (line.so_offset || line.address || "").length;
+      if (showSo && line.so_name) len += line.so_name.length + 3; // [name] + space
+      if (showAbs && line.address) len += line.address.length + 1; // addr + !
+      if (len > maxLen) maxLen = len;
+    }
+    return Math.max(DEFAULT_ADDR_WIDTH, Math.ceil(maxLen * CHAR_W + PAD));
+  }, [visibleLines]);
+
   const handleToggleSoName = useCallback(() => {
     const next = !preferences.showSoName;
     updatePreferences({
       showSoName: next,
       ...(next ? {} : { showAbsAddress: false }),
     });
-    addrCol.setWidth(next ? 250 : 90);
-  }, [preferences.showSoName, updatePreferences]);
+    addrCol.setWidth(next ? estimateAddrWidth(true, false) : DEFAULT_ADDR_WIDTH);
+  }, [preferences.showSoName, updatePreferences, estimateAddrWidth]);
 
   const handleToggleAbsAddress = useCallback(() => {
     if (!preferences.showSoName) return;
     const next = !preferences.showAbsAddress;
     updatePreferences({ showAbsAddress: next });
-    addrCol.setWidth(next ? 380 : 250);
-  }, [preferences.showSoName, preferences.showAbsAddress, updatePreferences]);
+    addrCol.setWidth(next ? estimateAddrWidth(true, true) : estimateAddrWidth(true, false));
+  }, [preferences.showSoName, preferences.showAbsAddress, updatePreferences, estimateAddrWidth]);
+
+  const handleToggleAddrColor = useCallback(() => {
+    updatePreferences({ addrColorHighlight: !preferences.addrColorHighlight });
+  }, [preferences.addrColorHighlight, updatePreferences]);
 
   // 动态列位置（每个拖动手柄占 8px）
   const HANDLE_W = 8;
@@ -1921,29 +1952,37 @@ export default function TraceTable({
         ctx.fillText(line.mem_rw, COL_MEMRW, textY);
       }
 
-      // Address
+      // Address（裁剪到列宽内，防止溢出到 Disasm 列）
       if (line.address || line.so_offset) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(COL_ADDR, y, addrCol.width, ROW_HEIGHT);
+        ctx.clip();
+
         let curX = COL_ADDR;
+        const addrColor = preferences.addrColorHighlight;
 
         if (preferences.showSoName && line.so_name) {
           const soText = `[${line.so_name}] `;
-          ctx.fillStyle = COLORS.textSoName;
+          ctx.fillStyle = addrColor ? COLORS.textSoName : COLORS.textSecondary;
           ctx.fillText(soText, curX, textY);
           curX += ctx.measureText(soText).width;
         }
 
         if (preferences.showAbsAddress && line.address) {
-          ctx.fillStyle = COLORS.textAbsAddress;
+          ctx.fillStyle = addrColor ? COLORS.textAbsAddress : COLORS.textSecondary;
           ctx.fillText(line.address, curX, textY);
           curX += ctx.measureText(line.address).width;
-          ctx.fillStyle = COLORS.textAddress;
+          ctx.fillStyle = addrColor ? COLORS.textAddress : COLORS.textSecondary;
           ctx.fillText("!", curX, textY);
           curX += ctx.measureText("!").width;
         }
 
         const offsetText = line.so_offset || line.address;
-        ctx.fillStyle = COLORS.textAddress;
+        ctx.fillStyle = addrColor ? COLORS.textAddress : COLORS.textSecondary;
         ctx.fillText(offsetText, curX, textY);
+
+        ctx.restore();
       }
 
       // Disasm（语法高亮 + hitbox）
@@ -2318,7 +2357,7 @@ export default function TraceTable({
       visibleLines, selectedSeq, arrowState, effectiveChangesWidth, effectiveDisasmWidth, effectiveBeforeWidth, fontReady,
       blLineMap, isFolded, finalSeqToVirtualIndex, toggleFold, multiSelect, ctrlSelect, highlights,
       sliceActive, sliceStatuses, sliceSourceSeq, taintFilterActive,
-      COL_ADDR, COL_DISASM, _themeId, preferences.showSoName, preferences.showAbsAddress]);
+      COL_ADDR, COL_DISASM, _themeId, preferences.showSoName, preferences.showAbsAddress, preferences.addrColorHighlight]);
 
   // drawFrame 通过 ref 暴露给 RAF 循环，避免 RAF useEffect 因 drawFrame 重建而重启导致掉帧
   const drawFrameRef = useRef(drawFrame);
@@ -2392,7 +2431,7 @@ export default function TraceTable({
         const changesSpan = document.createElement("span");
         rowDiv.appendChild(changesSpan);
       } else {
-        const cols = lineToTextColumns(resolved.seq, visibleLines.get(resolved.seq) ?? prefetchCacheRef.current.get(resolved.seq));
+        const cols = lineToTextColumns(resolved.seq, visibleLines.get(resolved.seq) ?? prefetchCacheRef.current.get(resolved.seq), preferences.showSoName, preferences.showAbsAddress);
 
         const memSpan = document.createElement("span");
         memSpan.textContent = cols.memRW;
@@ -2426,13 +2465,14 @@ export default function TraceTable({
 
       overlay.appendChild(rowDiv);
     }
-  }, [debouncedRow, visibleRows, finalVirtualTotalRows, finalResolveVirtualIndex, visibleLines, canvasSize.width, effectiveChangesWidth, effectiveDisasmWidth, effectiveBeforeWidth, COL_DISASM]);
+  }, [debouncedRow, visibleRows, finalVirtualTotalRows, finalResolveVirtualIndex, visibleLines, canvasSize.width, effectiveChangesWidth, effectiveDisasmWidth, effectiveBeforeWidth, COL_DISASM, preferences.showSoName, preferences.showAbsAddress]);
 
   // === 脏标记（useLayoutEffect 确保在 paint 前同步设置，配合 RAF 实现同帧渲染） ===
   useLayoutEffect(() => { dirtyRef.current = true; }, [
     currentRow, selectedSeq, arrowState, canvasSize, effectiveChangesWidth, effectiveDisasmWidth, effectiveBeforeWidth,
     visibleLines, finalVirtualTotalRows, fontReady, highlights, ctrlSelect,
     sliceActive, sliceStatuses, sliceSourceSeq,
+    preferences.showSoName, preferences.showAbsAddress, preferences.addrColorHighlight,
   ]);
 
   // === rAF 渲染循环（通过 drawFrameRef 解耦，循环永不重启，消除掉帧） ===
@@ -2467,7 +2507,7 @@ export default function TraceTable({
           background: "var(--bg-primary)",
         }}
       >
-        <TableHeader disasmWidth={effectiveDisasmWidth} regBeforeWidth={effectiveBeforeWidth} seqWidth={seqCol.width} addrWidth={addrCol.width} onDisasmResizeMouseDown={disasmCol.onMouseDown} onRegBeforeResizeMouseDown={regBeforeCol.onMouseDown} onSeqResizeMouseDown={seqCol.onMouseDown} onAddrResizeMouseDown={addrCol.onMouseDown} showSoName={preferences.showSoName} showAbsAddress={preferences.showAbsAddress} onToggleSoName={handleToggleSoName} onToggleAbsAddress={handleToggleAbsAddress} />
+        <TableHeader disasmWidth={effectiveDisasmWidth} regBeforeWidth={effectiveBeforeWidth} seqWidth={seqCol.width} addrWidth={addrCol.width} onDisasmResizeMouseDown={disasmCol.onMouseDown} onRegBeforeResizeMouseDown={regBeforeCol.onMouseDown} onSeqResizeMouseDown={seqCol.onMouseDown} onAddrResizeMouseDown={addrCol.onMouseDown} showSoName={preferences.showSoName} showAbsAddress={preferences.showAbsAddress} addrColorHighlight={preferences.addrColorHighlight} onToggleSoName={handleToggleSoName} onToggleAbsAddress={handleToggleAbsAddress} onToggleAddrColor={handleToggleAddrColor} />
         <div
           style={{
             flex: 1,
@@ -2486,7 +2526,7 @@ export default function TraceTable({
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-primary)" }}>
-      <TableHeader disasmWidth={effectiveDisasmWidth} regBeforeWidth={effectiveBeforeWidth} seqWidth={seqCol.width} addrWidth={addrCol.width} onDisasmResizeMouseDown={disasmCol.onMouseDown} onRegBeforeResizeMouseDown={regBeforeCol.onMouseDown} onSeqResizeMouseDown={seqCol.onMouseDown} onAddrResizeMouseDown={addrCol.onMouseDown} showSoName={preferences.showSoName} showAbsAddress={preferences.showAbsAddress} onToggleSoName={handleToggleSoName} onToggleAbsAddress={handleToggleAbsAddress} />
+      <TableHeader disasmWidth={effectiveDisasmWidth} regBeforeWidth={effectiveBeforeWidth} seqWidth={seqCol.width} addrWidth={addrCol.width} onDisasmResizeMouseDown={disasmCol.onMouseDown} onRegBeforeResizeMouseDown={regBeforeCol.onMouseDown} onSeqResizeMouseDown={seqCol.onMouseDown} onAddrResizeMouseDown={addrCol.onMouseDown} showSoName={preferences.showSoName} showAbsAddress={preferences.showAbsAddress} addrColorHighlight={preferences.addrColorHighlight} onToggleSoName={handleToggleSoName} onToggleAbsAddress={handleToggleAbsAddress} onToggleAddrColor={handleToggleAddrColor} />
       <div
         ref={containerRef}
         tabIndex={0}
@@ -2932,8 +2972,10 @@ interface TableHeaderProps {
   onAddrResizeMouseDown: (e: React.MouseEvent) => void;
   showSoName: boolean;
   showAbsAddress: boolean;
+  addrColorHighlight: boolean;
   onToggleSoName: () => void;
   onToggleAbsAddress: () => void;
+  onToggleAddrColor: () => void;
 }
 
 function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
@@ -2941,7 +2983,7 @@ function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => v
     <div
       onMouseDown={onMouseDown}
       style={{
-        width: 8, cursor: "col-resize", flexShrink: 0,
+        width: 8, cursor: "col-resize", flexShrink: 0, alignSelf: "stretch",
         display: "flex", alignItems: "center", justifyContent: "center",
       }}
     >
@@ -2950,11 +2992,12 @@ function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => v
   );
 }
 
-function TableHeader({ disasmWidth, regBeforeWidth, seqWidth, addrWidth, onDisasmResizeMouseDown, onRegBeforeResizeMouseDown, onSeqResizeMouseDown, onAddrResizeMouseDown, showSoName, showAbsAddress, onToggleSoName, onToggleAbsAddress }: TableHeaderProps) {
+function TableHeader({ disasmWidth, regBeforeWidth, seqWidth, addrWidth, onDisasmResizeMouseDown, onRegBeforeResizeMouseDown, onSeqResizeMouseDown, onAddrResizeMouseDown, showSoName, showAbsAddress, addrColorHighlight, onToggleSoName, onToggleAbsAddress, onToggleAddrColor }: TableHeaderProps) {
   return (
     <div
       style={{
         display: "flex",
+        alignItems: "center",
         padding: "4px 8px",
         background: "var(--bg-secondary)",
         borderBottom: "1px solid var(--border-color)",
@@ -2967,28 +3010,33 @@ function TableHeader({ disasmWidth, regBeforeWidth, seqWidth, addrWidth, onDisas
       <span style={{ width: COL_SEQ - COL_MEMRW, flexShrink: 0 }}></span>
       <span style={{ width: seqWidth, flexShrink: 0 }}>Seq</span>
       <ResizeHandle onMouseDown={onSeqResizeMouseDown} />
-      <span style={{ width: addrWidth, flexShrink: 0, display: "flex", alignItems: "center" }}>
+      <span style={{ width: addrWidth, flexShrink: 0 }}>
         <MenuDropdown
           label="Address"
           minWidth={160}
           closeOnSelect={false}
           labelStyle={{
             padding: "0 4px",
-            fontSize: "var(--font-size-sm)",
-            color: "var(--text-secondary)",
+            fontSize: "inherit",
+            color: "inherit",
             background: "transparent",
           }}
         >
           <MenuItem
-            label="显示模块名"
+            label="Show Module Name"
             checked={showSoName}
             onClick={onToggleSoName}
           />
           <MenuItem
-            label="显示绝对地址"
+            label="Show Absolute Address"
             checked={showAbsAddress}
             disabled={!showSoName}
             onClick={onToggleAbsAddress}
+          />
+          <MenuItem
+            label="Color Highlight"
+            checked={addrColorHighlight}
+            onClick={onToggleAddrColor}
           />
         </MenuDropdown>
       </span>

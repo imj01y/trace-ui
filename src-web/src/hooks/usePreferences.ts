@@ -14,6 +14,7 @@ export interface Preferences {
   confirmTaintRestore: boolean;
   showSoName: boolean;
   showAbsAddress: boolean;
+  addrColorHighlight: boolean;
 }
 
 export interface TaintConfig {
@@ -46,6 +47,7 @@ const DEFAULTS: Preferences = {
   confirmTaintRestore: true,
   showSoName: false,
   showAbsAddress: false,
+  addrColorHighlight: false,
 };
 
 function load(): Preferences {
