@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from "react";
-import { emit } from "@tauri-apps/api/event";
-import { useFloatingWindowInit } from "../hooks/useFloatingWindowInit";
+import React, { useState, useEffect, useCallback } from "react";
+import { emit, listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { StringRecordDto, StringXRef } from "../types/trace";
 import { useResizableColumn } from "../hooks/useResizableColumn";
 
@@ -10,7 +10,7 @@ interface XRefsData {
 }
 
 export default function StringXRefsPanel() {
-  const data = useFloatingWindowInit<XRefsData>("xrefs");
+  const [data, setData] = useState<XRefsData | null>(null);
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
 
   const seqCol = useResizableColumn(70, "right", 40, "xrefs:seq");
@@ -21,6 +21,17 @@ export default function StringXRefsPanel() {
     width: 8, cursor: "col-resize", flexShrink: 0,
     display: "flex", alignItems: "center", justifyContent: "center",
   };
+
+  // 先注册数据监听，再发送 ready 信号，确保不会丢失事件
+  useEffect(() => {
+    const unlisten = listen<XRefsData>("xrefs:init-data", (e) => {
+      setData(e.payload);
+    });
+    // 通知父窗口：已准备好接收数据
+    const winLabel = getCurrentWindow().label;
+    emit(`xrefs:ready:${winLabel}`);
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
 
   const handleJumpToSeq = useCallback((seq: number) => {
     setSelectedSeq(seq);

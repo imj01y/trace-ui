@@ -1,11 +1,13 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useVirtualizerNoSync } from "../hooks/useVirtualizerNoSync";
-import { useSearchHistory } from "../hooks/useSearchHistory";
 import type { FunctionCallEntry, FunctionCallsResult } from "../types/trace";
 import ContextMenu, { ContextMenuItem } from "./ContextMenu";
 
 type FilterType = "all" | "syscall" | "jni";
+
+const HISTORY_KEY = "func-list-search-history";
+const MAX_HISTORY = 20;
 
 type FlatRow = {
   type: "group";
@@ -38,10 +40,11 @@ export default function FunctionListPanel({ sessionId, isPhase2Ready, onJumpToSe
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Search history
-  const {
-    showHistory, setShowHistory, wrapperRef: searchWrapperRef,
-    addToHistory, removeHistoryItem, clearAllHistory, getFilteredHistory,
-  } = useSearchHistory({ storageKey: "func-list-search-history" });
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch { return []; }
+  });
+  const [showHistory, setShowHistory] = useState(false);
+  const searchWrapperRef = useRef<HTMLDivElement>(null);
 
   // Fetch data when sessionId changes or phase2 becomes ready
   useEffect(() => {
@@ -63,13 +66,45 @@ export default function FunctionListPanel({ sessionId, isPhase2Ready, onJumpToSe
     searchTimerRef.current = setTimeout(() => {
       setSearch(searchInput);
       if (searchInput.trim()) {
-        addToHistory(searchInput);
+        setSearchHistory(prev => {
+          const next = [searchInput.trim(), ...prev.filter(h => h !== searchInput.trim())].slice(0, MAX_HISTORY);
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+          return next;
+        });
       }
     }, 300);
     return () => clearTimeout(searchTimerRef.current);
-  }, [searchInput, addToHistory]);
+  }, [searchInput]);
 
-  const filteredHistory = getFilteredHistory(searchInput);
+  // Click outside to close history dropdown
+  useEffect(() => {
+    if (!showHistory) return;
+    const handler = (e: MouseEvent) => {
+      if (searchWrapperRef.current && !searchWrapperRef.current.contains(e.target as Node)) {
+        setShowHistory(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showHistory]);
+
+  const removeHistoryItem = useCallback((item: string) => {
+    setSearchHistory(prev => {
+      const next = prev.filter(h => h !== item);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const clearAllHistory = useCallback(() => {
+    setSearchHistory([]);
+    localStorage.removeItem(HISTORY_KEY);
+    setShowHistory(false);
+  }, []);
+
+  const filteredHistory = searchInput.trim()
+    ? searchHistory.filter(h => h !== searchInput.trim() && h.toLowerCase().includes(searchInput.toLowerCase()))
+    : searchHistory;
 
   // Filter + search
   const filtered = useMemo(() => {

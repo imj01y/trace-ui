@@ -6,7 +6,6 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { cleanupListeners, cleanupListener } from "./utils/tauriEvents";
 import TitleBar from "./components/TitleBar";
 import FunctionTree from "./components/FunctionTree";
 import FunctionListPanel from "./components/FunctionListPanel";
@@ -29,7 +28,7 @@ import { useFuncRenameStore } from "./hooks/useFuncRenameStore";
 import { usePreferences, saveSessionSnapshot, loadSessionSnapshot } from "./hooks/usePreferences";
 import { useHighlights } from "./hooks/useHighlights";
 import type { SessionSnapshot } from "./hooks/usePreferences";
-import type { CallTreeNodeDto, SearchMatch } from "./types/trace";
+import type { CallTreeNodeDto, SearchMatch, CryptoScanResult } from "./types/trace";
 import type { SearchOptions } from "./components/SearchBar";
 
 const PANEL_SIZES: Record<string, { width: number; height: number }> = {
@@ -38,6 +37,7 @@ const PANEL_SIZES: Record<string, { width: number; height: number }> = {
   "taint-state": { width: 600, height: 400 },
   search: { width: 800, height: 500 },
   strings: { width: 900, height: 450 },
+  crypto: { width: 900, height: 450 },
 };
 
 function clampToScreen(w: number, h: number): { width: number; height: number } {
@@ -55,6 +55,7 @@ const PANEL_WINDOW_TITLES: Record<string, string> = {
   "taint-state": "Taint State - Trace UI",
   search: "Search - Trace UI",
   strings: "Strings - Trace UI",
+  crypto: "Crypto - Trace UI",
 };
 
 function App() {
@@ -100,6 +101,8 @@ function App() {
 
   const [showGoto, setShowGoto] = useState(false);
   const [stringsScanningSessionId, setStringsScanningSessionId] = useState<string | null>(null);
+  const [cryptoScanningSessionId, setCryptoScanningSessionId] = useState<string | null>(null);
+  const [cryptoResults, setCryptoResults] = useState<CryptoScanResult | null>(null);
   const [leftTab, setLeftTab] = useState<"tree" | "list">("tree");
   const [callInfoExpandRequest, setCallInfoExpandRequest] = useState<{ seq: number; nonce: number } | null>(null);
 
@@ -108,6 +111,9 @@ function App() {
 
   // 文件切换时加载高亮
   useEffect(() => { loadForFile(filePath); }, [filePath, loadForFile]);
+
+  // 切换 session 时清除 crypto 结果
+  useEffect(() => { setCryptoResults(null); }, [activeSessionId]);
 
   // 控制 TraceTable 滚动对齐方式：back/forward 用 "auto"，其他用 "center"
   const scrollAlignRef = useRef<"center" | "auto" | "end">("center");
@@ -589,6 +595,21 @@ function App() {
     return () => document.removeEventListener("keydown", handler);
   }, [stringsScanningSessionId, cancelScanStrings]);
 
+  const scanCrypto = useCallback(async () => {
+    if (!activeSessionId) return;
+    setCryptoScanningSessionId(activeSessionId);
+    setCryptoResults(null);
+    try {
+      const result = await invoke<CryptoScanResult>("scan_crypto", { sessionId: activeSessionId });
+      setCryptoResults(result);
+      showToast(`Found ${result.matches.length} crypto constants (${result.algorithms_found.length} algorithms)`, { type: "success" });
+    } catch (e) {
+      console.warn("scan_crypto:", e);
+    } finally {
+      setCryptoScanningSessionId(null);
+    }
+  }, [activeSessionId, showToast]);
+
   // 浮动窗口引用（用于主窗口关闭时清理）
   const floatingWindowRefs = useRef<Map<string, WebviewWindow>>(new Map());
 
@@ -742,7 +763,7 @@ function App() {
       syncSearchStateRef.current(e.payload.results, e.payload.query, e.payload.status, e.payload.totalMatches);
     }));
 
-    return () => { cleanupListeners(unlisteners); };
+    return () => { unlisteners.forEach(p => p.then(fn => fn())); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -757,7 +778,7 @@ function App() {
         ref.destroy().catch(() => {});
       }
     });
-    return () => { cleanupListener(unlisten); };
+    return () => { unlisten.then(fn => fn()); };
   }, []);
 
   // selectedSeq sync via store subscriber (non-React)
@@ -866,7 +887,7 @@ function App() {
         }
       }
     });
-    return () => { cleanupListener(unlisten); };
+    return () => { unlisten.then((fn) => fn()); };
   }, [handleOpenFile]);
 
   return (
@@ -971,6 +992,8 @@ function App() {
         onScanStrings={scanStrings}
         hasStringIndex={hasStringIndexMap.get(activeSessionId ?? "") ?? false}
         stringsScanning={stringsScanningSessionId === activeSessionId}
+        onScanCrypto={scanCrypto}
+        cryptoScanning={cryptoScanningSessionId === activeSessionId}
         isPhase2Ready={isPhase2Ready}
         onClearCache={() => {
           clearRecent();
@@ -1121,6 +1144,8 @@ function App() {
                 sliceDuration={slice.sliceDuration}
                 sliceError={slice.sliceError}
                 stringsScanning={stringsScanningSessionId === activeSessionId}
+                cryptoResults={cryptoResults}
+                cryptoScanning={cryptoScanningSessionId === activeSessionId}
                 onSearch={handleSearch}
               />
             </Panel>

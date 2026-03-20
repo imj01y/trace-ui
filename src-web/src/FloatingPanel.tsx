@@ -8,8 +8,6 @@ import SearchResultList from "./components/SearchResultList";
 import StringsPanel from "./components/StringsPanel";
 import StringDetailPanel from "./components/StringDetailPanel";
 import StringXRefsPanel from "./components/StringXRefsPanel";
-import { useFloatingWindowInit } from "./hooks/useFloatingWindowInit";
-import { cleanupListeners, cleanupListener } from "./utils/tauriEvents";
 import type { SearchMatch, SearchResult } from "./types/trace";
 import SearchBar, { SearchOptions } from "./components/SearchBar";
 
@@ -86,7 +84,7 @@ export default function FloatingPanel({ panel }: { panel: string }) {
       setSyncState(prev => ({ ...prev, sessionId: e.payload.sessionId }));
     }));
 
-    return () => { cleanupListeners(unlisteners); };
+    return () => { unlisteners.forEach(p => p.then(fn => fn())); };
   }, []);
 
   // Search 面板：监听主窗口搜索转发
@@ -141,7 +139,7 @@ export default function FloatingPanel({ panel }: { panel: string }) {
     const unlisten = listen<{ query: string; options?: SearchOptions }>("action:trigger-search", (e) => {
       handleSearch(e.payload.query, e.payload.options);
     });
-    return () => { cleanupListener(unlisten); };
+    return () => { unlisten.then(fn => fn()); };
   }, [panel, handleSearch]);
 
   // Search 面板：接收主窗口同步的已有搜索结果
@@ -154,7 +152,7 @@ export default function FloatingPanel({ panel }: { panel: string }) {
       setSearchTotalMatches(e.payload.totalMatches);
       setIsSearching(false);
     });
-    return () => { cleanupListener(unlisten); };
+    return () => { unlisten.then(fn => fn()); };
   }, [panel]);
 
   const handleJumpToSeq = useCallback((seq: number) => {
@@ -270,7 +268,7 @@ function FloatingSearchContent({
       inputRef.current?.focus();
       inputRef.current?.select();
     });
-    return () => { cleanupListener(unlisten); };
+    return () => { unlisten.then(fn => fn()); };
   }, []);
 
   // ESC 关闭浮窗并同步状态回主窗口
@@ -360,7 +358,17 @@ function FloatingSearchContent({
 }
 
 function CallInfoContent() {
-  const info = useFloatingWindowInit<{ text: string; isJni: boolean }>("call-info");
+  const [info, setInfo] = useState<{ text: string; isJni: boolean } | null>(null);
+
+  // 事件方案：先注册数据监听，再发送 ready 信号
+  useEffect(() => {
+    const unlisten = listen<{ text: string; isJni: boolean }>("call-info:init-data", (e) => {
+      setInfo(e.payload);
+    });
+    const winLabel = getCurrentWindow().label;
+    emit(`call-info:ready:${winLabel}`);
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
 
   // Esc 关闭窗口
   useEffect(() => {

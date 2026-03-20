@@ -1,5 +1,4 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
-import { useSearchHistory } from "../hooks/useSearchHistory";
 
 export interface SearchOptions {
   caseSensitive: boolean;
@@ -7,6 +6,9 @@ export interface SearchOptions {
   useRegex: boolean;
   fuzzyMatch: boolean;
 }
+
+const HISTORY_KEY = "search-panel-history";
+const MAX_HISTORY = 20;
 
 interface SearchBarProps {
   query: string;
@@ -95,12 +97,50 @@ export default function SearchBar({
   const ref = externalRef || internalRef;
 
   // ── 搜索历史 ──
-  const {
-    showHistory, setShowHistory, wrapperRef: searchWrapperRef,
-    addToHistory, removeHistoryItem, clearAllHistory, getFilteredHistory,
-  } = useSearchHistory({ storageKey: "search-panel-history" });
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch { return []; }
+  });
+  const [showHistory, setShowHistory] = useState(false);
+  const searchWrapperRef = useRef<HTMLDivElement>(null);
 
-  const filteredHistory = getFilteredHistory(query);
+  const addToHistory = useCallback((q: string) => {
+    if (!q.trim()) return;
+    setSearchHistory(prev => {
+      const next = [q.trim(), ...prev.filter(h => h !== q.trim())].slice(0, MAX_HISTORY);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const removeHistoryItem = useCallback((item: string) => {
+    setSearchHistory(prev => {
+      const next = prev.filter(h => h !== item);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const clearAllHistory = useCallback(() => {
+    setSearchHistory([]);
+    localStorage.removeItem(HISTORY_KEY);
+    setShowHistory(false);
+  }, []);
+
+  // 点击外部关闭历史面板
+  useEffect(() => {
+    if (!showHistory) return;
+    const handler = (e: MouseEvent) => {
+      if (searchWrapperRef.current && !searchWrapperRef.current.contains(e.target as Node)) {
+        setShowHistory(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showHistory]);
+
+  const filteredHistory = query.trim()
+    ? searchHistory.filter(h => h !== query.trim() && h.toLowerCase().includes(query.toLowerCase()))
+    : searchHistory;
 
   // 同步外部 initialOptions 变化（ESC 还原时）
   useEffect(() => {
