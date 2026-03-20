@@ -124,3 +124,13 @@ export interface FunctionCallsResult {
   functions: FunctionCallEntry[];
   total_calls: number;
 }
+
+export interface DependencyNode {
+  seq: number;
+  expression: string;
+  operation: string;
+  children: DependencyNode[];
+  isLeaf: boolean;
+  value: string | null;
+  depth: number;
+}
