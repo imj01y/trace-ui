@@ -1,8 +1,14 @@
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::flat::line_index::LineIndexView;
 use crate::flat::scan_view::ScanView;
+use crate::taint::def_use::determine_def_use;
+use crate::taint::gumtrace_parser;
+use crate::taint::insn_class;
+use crate::taint::parser;
 use crate::taint::scanner::{CONTROL_DEP_BIT, LINE_MASK, PAIR_HALF2_BIT, PAIR_SHARED_BIT};
+use crate::taint::types::TraceFormat;
 use rustc_hash::FxHashMap;
 
 #[derive(Serialize, Clone)]
@@ -148,5 +154,61 @@ fn build_node(
         is_leaf,
         value: None,
         depth,
+    }
+}
+
+pub fn populate_node_info(
+    node: &mut DependencyNode,
+    mmap: &[u8],
+    line_index: &LineIndexView,
+    format: TraceFormat,
+) {
+    if let Some(raw_line) = line_index.get_line(mmap, node.seq) {
+        if let Ok(line_str) = std::str::from_utf8(raw_line) {
+            let parsed = match format {
+                TraceFormat::Unidbg => parser::parse_line(line_str),
+                TraceFormat::Gumtrace => gumtrace_parser::parse_line_gumtrace(line_str),
+            };
+            if let Some(ref p) = parsed {
+                let cls = insn_class::classify_and_refine(p);
+                let (defs, uses) = determine_def_use(cls, p);
+                node.operation = p.mnemonic.to_string();
+
+                let def_str = defs.iter().map(|r| format!("{:?}", r)).collect::<Vec<_>>().join(", ");
+                let use_str = uses.iter().map(|r| format!("{:?}", r)).collect::<Vec<_>>().join(", ");
+                let changes = extract_changes(line_str);
+
+                if p.mem_op.is_some() {
+                    let mem = p.mem_op.as_ref().unwrap();
+                    if mem.is_write {
+                        node.expression = format!("mem[0x{:x}] = {}", mem.abs, use_str);
+                    } else {
+                        node.expression = format!("{} = mem[0x{:x}]", def_str, mem.abs);
+                    }
+                } else if !def_str.is_empty() {
+                    node.expression = format!("{} = {} {}", def_str, p.mnemonic, use_str);
+                } else {
+                    node.expression = format!("{} {}", p.mnemonic, use_str);
+                }
+
+                if node.is_leaf && !changes.is_empty() {
+                    node.value = Some(changes);
+                }
+            } else {
+                node.expression = line_str.trim().to_string();
+                node.operation = "unknown".to_string();
+            }
+        }
+    }
+    for child in &mut node.children {
+        populate_node_info(child, mmap, line_index, format);
+    }
+}
+
+fn extract_changes(line: &str) -> String {
+    if let Some(pos) = line.rfind("=> ") {
+        line[pos + 3..].trim().to_string()
+    } else {
+        String::new()
     }
 }

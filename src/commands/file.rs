@@ -54,6 +54,7 @@ pub async fn create_session(
             lidx_store: None,
             // Unchanged
             slice_result: None,
+            slice_origin: None,
             scan_strings_cancelled: Arc::new(AtomicBool::new(false)),
             call_annotations: std::collections::HashMap::new(),
             consumed_seqs: Vec::new(),

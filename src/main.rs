@@ -63,6 +63,9 @@ fn main() {
             commands::strings::cancel_scan_strings,
             commands::browse::get_consumed_seqs,
             commands::functions::get_function_calls,
+            commands::dep_tree::build_dependency_tree,
+            commands::dep_tree::build_dependency_tree_from_slice,
+            commands::dep_tree::get_line_def_registers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

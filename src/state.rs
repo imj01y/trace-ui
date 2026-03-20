@@ -17,6 +17,11 @@ use crate::taint::strings::StringIndex;
 use crate::taint::types::TraceFormat;
 use crate::taint::gumtrace_parser::CallAnnotation;
 
+pub struct SliceOrigin {
+    pub from_specs: Vec<String>,
+    pub data_only: bool,
+}
+
 /// 单个 trace 文件的会话状态
 #[allow(dead_code)]
 pub struct SessionState {
@@ -40,6 +45,7 @@ pub struct SessionState {
 
     // Unchanged
     pub slice_result: Option<bitvec::prelude::BitVec>,
+    pub slice_origin: Option<SliceOrigin>,
     pub scan_strings_cancelled: Arc<AtomicBool>,
     pub call_annotations: std::collections::HashMap<u32, CallAnnotation>,
     pub consumed_seqs: Vec<u32>,

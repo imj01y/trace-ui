@@ -19,7 +19,7 @@ pub struct SliceResult {
 }
 
 /// 解析 from_spec 字符串并找到 BFS 起点行号
-fn resolve_start_index(
+pub fn resolve_start_index(
     spec: &str,
     reg_last_def: &crate::taint::scanner::RegLastDef,
     mem_last_def: &crate::flat::mem_last_def::MemLastDefView,
@@ -188,6 +188,10 @@ fn run_slice_inner(
         let mut sessions = state.sessions.write().map_err(|e| e.to_string())?;
         if let Some(session) = sessions.get_mut(session_id) {
             session.slice_result = Some(marked);
+            session.slice_origin = Some(crate::state::SliceOrigin {
+                from_specs: from_specs.to_vec(),
+                data_only,
+            });
         }
     }
 
@@ -241,6 +245,7 @@ pub fn clear_slice(
     let mut sessions = state.sessions.write().map_err(|e| e.to_string())?;
     if let Some(session) = sessions.get_mut(&session_id) {
         session.slice_result = None;
+        session.slice_origin = None;
     }
     Ok(())
 }
