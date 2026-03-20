@@ -53,6 +53,8 @@ interface MinimapProps {
   getLines: (seqs: number[]) => Promise<TraceLine[]>;
   selectedSeq: number | null;
   rightOffset?: number;
+  showSoName: boolean;
+  showAbsAddress: boolean;
 }
 
 export { MINIMAP_WIDTH };
@@ -60,6 +62,7 @@ export { MINIMAP_WIDTH };
 export default function Minimap({
   virtualTotalRows, visibleRows, currentRow, maxRow, height,
   onScroll, resolveVirtualIndex, getLines, selectedSeq, rightOffset,
+  showSoName, showAbsAddress,
 }: MinimapProps) {
   const _themeId = useThemeId(); // 触发主题切换时的重绘
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -169,9 +172,17 @@ export default function Minimap({
         if (!line) continue;
         let curX = MINIMAP_COL_START;
 
-        if (line.address) {
+        if (line.address || line.so_offset) {
+          let addrText = line.so_offset || line.address;
+          if (showSoName && line.so_name) {
+            const prefix = `[${line.so_name}] `;
+            const addrPart = (showAbsAddress && line.address)
+              ? `${line.address}!${line.so_offset}`
+              : line.so_offset;
+            addrText = prefix + addrPart;
+          }
           ctx.fillStyle = MM_COLORS.address;
-          const w = line.address.length * MINIMAP_CHAR_WIDTH;
+          const w = (addrText?.length ?? 0) * MINIMAP_CHAR_WIDTH;
           ctx.fillRect(curX, y, w, MINIMAP_ROW_HEIGHT);
           curX += w + 2;
         }

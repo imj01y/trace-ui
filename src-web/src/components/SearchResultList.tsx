@@ -377,6 +377,8 @@ export default function SearchResultList({
               getLines={searchGetLines}
               selectedSeq={selectedSeq}
               rightOffset={12}
+              showSoName={false}
+              showAbsAddress={false}
             />
             <CustomScrollbar
               currentRow={scrollRow}

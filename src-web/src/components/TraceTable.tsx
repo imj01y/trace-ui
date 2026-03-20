@@ -2905,6 +2905,8 @@ export default function TraceTable({
           resolveVirtualIndex={finalResolveVirtualIndex}
           getLines={getLines}
           selectedSeq={selectedSeq}
+          showSoName={preferences.showSoName}
+          showAbsAddress={preferences.showAbsAddress}
         />
         <CustomScrollbar
           currentRow={currentRow}

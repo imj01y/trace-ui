@@ -647,6 +647,8 @@ export default function MemoryPanel({ selectedSeq: selectedSeqProp, isPhase2Read
                         getLines={historyGetLines}
                         selectedSeq={selectedSeq}
                         rightOffset={12}
+                        showSoName={false}
+                        showAbsAddress={false}
                       />
                       <CustomScrollbar
                         currentRow={historyScrollRow}
