@@ -4,13 +4,14 @@ import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useVirtualizerNoSync } from "../hooks/useVirtualizerNoSync";
 import { useResizableColumn } from "../hooks/useResizableColumn";
-import { useSearchHistory } from "../hooks/useSearchHistory";
 import ContextMenu, { ContextMenuItem } from "./ContextMenu";
 import type { StringRecordDto, StringsResult, StringXRef } from "../types/trace";
 
 
 const PAGE_SIZE = 500;
 const ROW_HEIGHT = 22;
+const HISTORY_KEY = "strings-search-history";
+const MAX_HISTORY = 20;
 
 interface Props {
   sessionId: string | null;
@@ -39,10 +40,12 @@ export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq, st
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; record: StringRecordDto } | null>(null);
 
-  const {
-    showHistory, setShowHistory, wrapperRef: searchWrapperRef,
-    addToHistory, removeHistoryItem, clearAllHistory, getFilteredHistory,
-  } = useSearchHistory({ storageKey: "strings-search-history" });
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch { return []; }
+  });
+  const [showHistory, setShowHistory] = useState(false);
+  const historyBlurTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const searchWrapperRef = useRef<HTMLDivElement>(null);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -96,14 +99,47 @@ export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq, st
     clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(() => {
       setSearch(searchInput);
+      // 记录搜索历史
       if (searchInput.trim()) {
-        addToHistory(searchInput);
+        setSearchHistory(prev => {
+          const next = [searchInput.trim(), ...prev.filter(h => h !== searchInput.trim())].slice(0, MAX_HISTORY);
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+          return next;
+        });
       }
     }, 300);
     return () => clearTimeout(searchTimerRef.current);
-  }, [searchInput, addToHistory]);
+  }, [searchInput]);
 
-  const filteredHistory = getFilteredHistory(searchInput);
+  // ── 搜索历史：点击外部关闭 ──
+  useEffect(() => {
+    if (!showHistory) return;
+    const handler = (e: MouseEvent) => {
+      if (searchWrapperRef.current && !searchWrapperRef.current.contains(e.target as Node)) {
+        setShowHistory(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showHistory]);
+
+  const removeHistoryItem = useCallback((item: string) => {
+    setSearchHistory(prev => {
+      const next = prev.filter(h => h !== item);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const clearAllHistory = useCallback(() => {
+    setSearchHistory([]);
+    localStorage.removeItem(HISTORY_KEY);
+    setShowHistory(false);
+  }, []);
+
+  const filteredHistory = searchInput.trim()
+    ? searchHistory.filter(h => h !== searchInput.trim() && h.toLowerCase().includes(searchInput.toLowerCase()))
+    : searchHistory;
 
   // ── minLen debounce ──
   const [minLenInput, setMinLenInput] = useState(4);

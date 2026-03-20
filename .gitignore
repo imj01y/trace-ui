@@ -26,10 +26,11 @@ CLAUDE.md
 # Superpowers
 .superpowers/
 
-# Docs（仅允许 docs/images/）
+# Docs?????? docs/images/??
 docs/*
 !docs/images/
 
 # Trace files
 *.trace
 trace-*.txt
+

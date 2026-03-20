@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { cleanupListeners } from "./utils/tauriEvents";
 import TraceTable from "./components/TraceTable";
 import FloatingWindowFrame from "./components/FloatingWindowFrame";
 import { MenuDropdown, MenuItem, MenuSeparator } from "./components/MenuDropdown";
@@ -78,7 +77,7 @@ export default function FloatingSession({
         }
       }
     ));
-    return () => { cleanupListeners(unlisteners); };
+    return () => { unlisteners.forEach(p => p.then(fn => fn())); };
   }, [sessionId]);
 
   // === 独立的 Taint 状态管理 ===

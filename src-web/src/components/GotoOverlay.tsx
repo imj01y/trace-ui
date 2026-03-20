@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useSearchHistory } from "../hooks/useSearchHistory";
 import type { SearchMatch, SearchResult } from "../types/trace";
 
 interface Props {
@@ -15,6 +14,9 @@ function isHexAddress(input: string): boolean {
   return /[a-fA-F]/.test(input) && /^[0-9a-fA-F]+$/.test(input);
 }
 
+const GOTO_HISTORY_KEY = "goto-search-history";
+const MAX_GOTO_HISTORY = 20;
+
 export default function GotoOverlay({ onJumpToSeq, onClose, sessionId, totalLines }: Props) {
   const [input, setInput] = useState("");
   const [matches, setMatches] = useState<SearchMatch[]>([]);
@@ -24,14 +26,49 @@ export default function GotoOverlay({ onJumpToSeq, onClose, sessionId, totalLine
   const listRef = useRef<HTMLDivElement>(null);
 
   // ── 搜索历史 ──
-  const {
-    showHistory: showGotoHistory, setShowHistory: setShowGotoHistory,
-    wrapperRef: inputWrapperRef,
-    addToHistory: addGotoHistory, removeHistoryItem: removeGotoHistoryItem,
-    clearAllHistory: clearAllGotoHistory, getFilteredHistory,
-  } = useSearchHistory({ storageKey: "goto-search-history" });
+  const [gotoHistory, setGotoHistory] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(GOTO_HISTORY_KEY) || "[]"); } catch { return []; }
+  });
+  const [showGotoHistory, setShowGotoHistory] = useState(false);
+  const inputWrapperRef = useRef<HTMLDivElement>(null);
 
-  const filteredGotoHistory = getFilteredHistory(input);
+  useEffect(() => {
+    if (!showGotoHistory) return;
+    const handler = (e: MouseEvent) => {
+      if (inputWrapperRef.current && !inputWrapperRef.current.contains(e.target as Node)) {
+        setShowGotoHistory(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showGotoHistory]);
+
+  const addGotoHistory = useCallback((query: string) => {
+    if (!query.trim()) return;
+    setGotoHistory(prev => {
+      const next = [query.trim(), ...prev.filter(h => h !== query.trim())].slice(0, MAX_GOTO_HISTORY);
+      localStorage.setItem(GOTO_HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const removeGotoHistoryItem = useCallback((item: string) => {
+    setGotoHistory(prev => {
+      const next = prev.filter(h => h !== item);
+      localStorage.setItem(GOTO_HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const clearAllGotoHistory = useCallback(() => {
+    setGotoHistory([]);
+    localStorage.removeItem(GOTO_HISTORY_KEY);
+    setShowGotoHistory(false);
+  }, []);
+
+  const filteredGotoHistory = input.trim()
+    ? gotoHistory.filter(h => h !== input.trim() && h.toLowerCase().includes(input.toLowerCase()))
+    : gotoHistory;
 
   // 自动聚焦
   useEffect(() => {

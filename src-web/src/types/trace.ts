@@ -120,3 +120,19 @@ export interface FunctionCallsResult {
   functions: FunctionCallEntry[];
   total_calls: number;
 }
+
+export interface CryptoMatch {
+  algorithm: string;
+  magic_hex: string;
+  seq: number;
+  address: string;
+  disasm: string;
+  changes: string;
+}
+
+export interface CryptoScanResult {
+  matches: CryptoMatch[];
+  algorithms_found: string[];
+  total_lines_scanned: number;
+  scan_duration_ms: number;
+}

@@ -1,6 +1,7 @@
 pub mod browse;
 pub mod cache;
 pub mod call_tree;
+pub mod crypto;
 pub mod def_use;
 pub mod file;
 pub mod functions;
