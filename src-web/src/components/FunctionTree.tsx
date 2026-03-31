@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useVirtualizerNoSync } from "../hooks/useVirtualizerNoSync";
+import { useVirtualScroll } from "../hooks/useVirtualScroll";
 import type { CallTreeNodeDto } from "../types/trace";
 import ContextMenu, { ContextMenuItem, ContextMenuSeparator } from "./ContextMenu";
 
@@ -47,8 +47,6 @@ export default function FunctionTree({
   const [expanded, setExpanded] = useState<Set<number>>(new Set([0]));
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [loadingNodes, setLoadingNodes] = useState<Set<number>>(new Set());
-  const parentRef = useRef<HTMLDivElement>(null);
-
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: FlatRow } | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ addr: string; currentName: string } | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -84,12 +82,7 @@ export default function FunctionTree({
     return result;
   }, [nodeMap, expanded, lazyMode, loadedNodes]);
 
-  const virtualizer = useVirtualizerNoSync({
-    count: rows.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 22,
-    overscan: 20,
-  });
+  const vs = useVirtualScroll({ totalCount: rows.length, rowHeight: 22, overscan: 20 });
 
   const toggleExpand = useCallback(async (id: number) => {
     if (expanded.has(id)) {
@@ -163,8 +156,6 @@ export default function FunctionTree({
     );
   }
 
-  const virtualItems = virtualizer.getVirtualItems();
-
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-primary)" }}>
       <div style={{
@@ -173,60 +164,59 @@ export default function FunctionTree({
       }}>
         Functions ({nodeCount.toLocaleString()})
       </div>
-      <div ref={parentRef} style={{ flex: 1, overflow: "auto" }}>
-        <div style={{ height: virtualizer.getTotalSize(), width: "100%", position: "relative" }}>
-          {virtualItems.map((virtualRow) => {
-            const row = rows[virtualRow.index];
-            if (!row) return null;
-            const isNodeLoading = loadingNodes.has(row.id);
-            const customName = funcRename.getName(row.func_addr);
-            const displayName = customName || row.func_name;
-            return (
-              <div
-                key={row.id}
-                onClick={() => handleClick(row)}
-                onDoubleClick={() => handleDoubleClick(row)}
-                onContextMenu={(e) => handleContextMenu(e, row)}
-                style={{
-                  position: "absolute", top: 0, left: 0, width: "100%", height: 22,
-                  transform: `translateY(${virtualRow.start}px)`,
-                  paddingLeft: row.depth * 16 + 4, paddingRight: 8,
-                  cursor: "pointer", fontSize: 12, lineHeight: "22px",
-                  whiteSpace: "nowrap",
-                  background: selectedId === row.id ? "var(--bg-selected)" : "transparent",
-                  display: "flex", alignItems: "center", gap: 4,
-                }}
-                onMouseEnter={(e) => { if (selectedId !== row.id) e.currentTarget.style.background = "var(--bg-row-odd)"; }}
-                onMouseLeave={(e) => { if (selectedId !== row.id) e.currentTarget.style.background = "transparent"; }}
-              >
-                <span style={{ width: 12, textAlign: "center", color: "var(--text-secondary)", fontSize: 10, flexShrink: 0 }}>
-                  {row.hasChildren
-                    ? (isNodeLoading ? "\u23F3" : (row.isExpanded && row.isChildrenLoaded ? "\u25BC" : "\u25B6"))
-                    : ""}
-                </span>
-                {displayName
-                  ? <span
-                      style={{ color: "var(--text-primary)", flexShrink: 0 }}
-                      onMouseEnter={(e) => {
-                        const mx = e.clientX, my = e.clientY;
-                        tooltipTimer.current = setTimeout(() => {
-                          setTooltip({ x: mx, y: my + 16, text: row.func_addr });
-                        }, 100);
-                      }}
-                      onMouseLeave={() => {
-                        if (tooltipTimer.current) { clearTimeout(tooltipTimer.current); tooltipTimer.current = null; }
-                        setTooltip(null);
-                      }}
-                    >{displayName}</span>
-                  : <span style={{ color: "var(--text-address)", flexShrink: 0 }}>{row.func_addr}</span>
-                }
-                <span style={{ color: "var(--text-secondary)", fontSize: 11, marginLeft: "auto", flexShrink: 0 }}>
-                  {formatLineCount(row.line_count)}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+      <div ref={vs.containerRef} style={{ flex: 1, ...vs.containerStyle }}>
+        {Array.from({ length: Math.max(0, vs.endIdx - vs.startIdx + 1) }, (_, i) => {
+          const index = vs.startIdx + i;
+          const row = rows[index];
+          if (!row) return null;
+          const isNodeLoading = loadingNodes.has(row.id);
+          const customName = funcRename.getName(row.func_addr);
+          const displayName = customName || row.func_name;
+          return (
+            <div
+              key={row.id}
+              onClick={() => handleClick(row)}
+              onDoubleClick={() => handleDoubleClick(row)}
+              onContextMenu={(e) => handleContextMenu(e, row)}
+              style={{
+                position: "absolute", top: 0, left: 0, width: "100%", height: 22,
+                transform: `translateY(${vs.getItemY(index)}px)`,
+                paddingLeft: row.depth * 16 + 4, paddingRight: 8,
+                cursor: "pointer", fontSize: 12, lineHeight: "22px",
+                whiteSpace: "nowrap",
+                background: selectedId === row.id ? "var(--bg-selected)" : "transparent",
+                display: "flex", alignItems: "center", gap: 4,
+              }}
+              onMouseEnter={(e) => { if (selectedId !== row.id) e.currentTarget.style.background = "var(--bg-row-odd)"; }}
+              onMouseLeave={(e) => { if (selectedId !== row.id) e.currentTarget.style.background = "transparent"; }}
+            >
+              <span style={{ width: 12, textAlign: "center", color: "var(--text-secondary)", fontSize: 10, flexShrink: 0 }}>
+                {row.hasChildren
+                  ? (isNodeLoading ? "\u23F3" : (row.isExpanded && row.isChildrenLoaded ? "\u25BC" : "\u25B6"))
+                  : ""}
+              </span>
+              {displayName
+                ? <span
+                    style={{ color: "var(--text-primary)", flexShrink: 0 }}
+                    onMouseEnter={(e) => {
+                      const mx = e.clientX, my = e.clientY;
+                      tooltipTimer.current = setTimeout(() => {
+                        setTooltip({ x: mx, y: my + 16, text: row.func_addr });
+                      }, 100);
+                    }}
+                    onMouseLeave={() => {
+                      if (tooltipTimer.current) { clearTimeout(tooltipTimer.current); tooltipTimer.current = null; }
+                      setTooltip(null);
+                    }}
+                  >{displayName}</span>
+                : <span style={{ color: "var(--text-address)", flexShrink: 0 }}>{row.func_addr}</span>
+              }
+              <span style={{ color: "var(--text-secondary)", fontSize: 11, marginLeft: "auto", flexShrink: 0 }}>
+                {formatLineCount(row.line_count)}
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       {tooltip && createPortal(

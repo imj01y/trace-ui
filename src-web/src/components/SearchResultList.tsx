@@ -8,6 +8,7 @@ import CustomScrollbar from "./CustomScrollbar";
 import { useResizableColumn } from "../hooks/useResizableColumn";
 import { highlightText, highlightHexdump } from "../utils/highlightText";
 import VirtualizedHighlight from "./VirtualizedHighlight";
+import { useVirtualScroll } from "../hooks/useVirtualScroll";
 
 const BASE_ROW_HEIGHT = 22;
 const DETAIL_LINE_HEIGHT = 16;
@@ -107,51 +108,16 @@ export default function SearchResultList({
   const selectedSeqFromStore = useSelectedSeq();
   const selectedSeq = selectedSeqProp !== undefined ? selectedSeqProp : selectedSeqFromStore;
 
-  const parentRef = useRef<HTMLDivElement>(null);
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
-  const [containerHeight, setContainerHeight] = useState(0);
-  const [containerWidth, setContainerWidth] = useState(0);
+  const vs = useVirtualScroll({ totalCount, rowHeight: BASE_ROW_HEIGHT, overscan: OVERSCAN, wheelSpeed: WHEEL_SPEED });
+  const { currentRow: clampedRow, visibleRows, maxRow, startIdx, endIdx, scrollToRow, containerRef: parentRef, containerHeight, containerWidth, containerStyle: vsContainerStyle } = vs;
 
-  // ── 核心：currentRow 驱动虚拟渲染，纯数字，无浏览器限制 ──
-  const [currentRow, setCurrentRow] = useState(0);
-  const scrollPosRef = useRef(0); // 浮点精度，用于平滑滚动
-  const wheelTimerRef = useRef(0);
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
 
   const colFixedLeft = 40 + rwCol.width + HANDLE_W + seqCol.width + HANDLE_W + addrCol.width + HANDLE_W;
   const MIN_CHANGES_WIDTH = 60;
   const availableForRight = Math.max(0, containerWidth - colFixedLeft - 2 * HANDLE_W - MIN_CHANGES_WIDTH);
   const effectiveDisasmWidth = Math.max(200, Math.min(disasmCol.width, availableForRight - 40));
   const effectiveBeforeWidth = Math.max(40, Math.min(beforeCol.width, availableForRight - effectiveDisasmWidth));
-
-  const visibleRows = Math.max(1, Math.floor(containerHeight / BASE_ROW_HEIGHT));
-  const maxRow = Math.max(0, totalCount - visibleRows);
-
-  // currentRow 钳位
-  const clampedRow = Math.max(0, Math.min(currentRow, maxRow));
-  if (clampedRow !== currentRow) {
-    // 同步修正（避免 totalCount 缩小后超出范围）
-    scrollPosRef.current = clampedRow;
-    // 不能直接 setCurrentRow（会导致无限渲染），通过 useEffect 修正
-  }
-  useEffect(() => {
-    if (currentRow > maxRow && maxRow >= 0) {
-      scrollPosRef.current = maxRow;
-      setCurrentRow(maxRow);
-    }
-  }, [currentRow, maxRow]);
-
-  // totalCount 变化时重置滚动位置
-  useEffect(() => {
-    scrollPosRef.current = 0;
-    setCurrentRow(0);
-  }, [totalCount]);
-
-  // ── scrollTo helper（供外部跳转用）──
-  const scrollToRow = useCallback((row: number) => {
-    const clamped = Math.max(0, Math.min(row, maxRow));
-    scrollPosRef.current = clamped;
-    setCurrentRow(clamped);
-  }, [maxRow]);
 
   // ── selectedSeq 同步 ──
   useEffect(() => {
@@ -165,51 +131,6 @@ export default function SearchResultList({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSeq]);
-
-  // ── wheel handler：拦截原生滚动，直接操作 currentRow ──
-  useEffect(() => {
-    const el = parentRef.current;
-    if (!el) return;
-    const handler = (e: WheelEvent) => {
-      e.preventDefault();
-      scrollPosRef.current += (e.deltaY / BASE_ROW_HEIGHT) * WHEEL_SPEED;
-      if (scrollPosRef.current < 0) scrollPosRef.current = 0;
-      if (scrollPosRef.current > maxRow) scrollPosRef.current = maxRow;
-
-      // 节流 React 状态更新
-      if (wheelTimerRef.current) clearTimeout(wheelTimerRef.current);
-      wheelTimerRef.current = window.setTimeout(() => {
-        const newRow = Math.floor(scrollPosRef.current);
-        setCurrentRow(prev => prev !== newRow ? newRow : prev);
-      }, 16);
-    };
-    el.addEventListener("wheel", handler, { passive: false });
-    return () => {
-      el.removeEventListener("wheel", handler);
-      if (wheelTimerRef.current) clearTimeout(wheelTimerRef.current);
-    };
-  }, [maxRow]);
-
-  // ── ResizeObserver ──
-  useEffect(() => {
-    const el = parentRef.current;
-    if (!el) return;
-    let timer = 0;
-    const ro = new ResizeObserver((entries) => {
-      clearTimeout(timer);
-      const { height: h, width: w } = entries[0].contentRect;
-      timer = window.setTimeout(() => {
-        setContainerHeight(h);
-        setContainerWidth(w);
-      }, document.documentElement.dataset.separatorDrag ? 300 : 0);
-    });
-    ro.observe(el);
-    return () => { clearTimeout(timer); ro.disconnect(); };
-  }, []);
-
-  // ── 手动计算可见行（替代 virtualizer.getVirtualItems）──
-  const startIdx = Math.max(0, clampedRow - OVERSCAN);
-  const endIdx = Math.min(totalCount - 1, clampedRow + visibleRows + OVERSCAN);
 
   const virtualItems = useMemo(() => {
     if (totalCount === 0 || containerHeight === 0) return [];
@@ -257,9 +178,8 @@ export default function SearchResultList({
 
   // ── Minimap / Scrollbar 回调 ──
   const handleScrollbarScroll = useCallback((row: number) => {
-    scrollPosRef.current = row;
-    setCurrentRow(row);
-  }, []);
+    scrollToRow(row);
+  }, [scrollToRow]);
 
   const searchResolve = useCallback((vi: number): ResolvedRow => {
     return { type: "line", seq: getSeqAtIndex(vi) ?? vi } as ResolvedRow;
@@ -359,10 +279,9 @@ export default function SearchResultList({
           onKeyDown={handleKeyDown}
           style={{
             flex: 1,
-            overflow: "hidden",
+            ...vsContainerStyle,
             outline: "none",
             fontSize: "var(--font-size-sm)",
-            position: "relative",
           }}
         >
           {virtualItems.map((vRow) => {

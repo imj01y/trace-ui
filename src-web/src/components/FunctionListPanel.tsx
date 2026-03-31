@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useVirtualizerNoSync } from "../hooks/useVirtualizerNoSync";
+import { useVirtualScroll } from "../hooks/useVirtualScroll";
 import type { FunctionCallEntry, FunctionCallsResult } from "../types/trace";
 import ContextMenu, { ContextMenuItem } from "./ContextMenu";
 
@@ -35,7 +35,6 @@ export default function FunctionListPanel({ sessionId, isPhase2Ready, onJumpToSe
   const [searchInput, setSearchInput] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
-  const parentRef = useRef<HTMLDivElement>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; funcName: string } | null>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -134,12 +133,7 @@ export default function FunctionListPanel({ sessionId, isPhase2Ready, onJumpToSe
     return result;
   }, [filtered, expanded]);
 
-  const virtualizer = useVirtualizerNoSync({
-    count: rows.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 22,
-    overscan: 10,
-  });
+  const vs = useVirtualScroll({ totalCount: rows.length, rowHeight: 22, overscan: 10 });
 
   const toggleExpand = useCallback((funcName: string) => {
     setExpanded(prev => {
@@ -283,95 +277,96 @@ export default function FunctionListPanel({ sessionId, isPhase2Ready, onJumpToSe
       </div>
 
       {/* Virtual list */}
-      <div ref={parentRef} style={{ flex: 1, overflow: "auto" }}>
-        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
-          {virtualizer.getVirtualItems().map(vItem => {
-            const row = rows[vItem.index];
-            if (row.type === "group") {
-              const { entry, isExpanded } = row;
-              return (
-                <div
-                  key={`g-${entry.func_name}`}
-                  data-index={vItem.index}
-                  style={{
-                    position: "absolute",
-                    top: vItem.start,
-                    left: 0,
-                    right: 0,
-                    height: vItem.size,
-                    display: "flex",
-                    alignItems: "center",
-                    padding: "0 8px",
-                    cursor: "pointer",
-                    fontSize: 12,
-                    userSelect: "none",
-                  }}
-                  onClick={() => toggleExpand(entry.func_name)}
-                  onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setCtxMenu({ x: e.clientX, y: e.clientY, funcName: entry.func_name }); }}
-                  onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-row-odd)")}
-                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
-                >
-                  <span style={{ width: 12, textAlign: "center", flexShrink: 0, color: "var(--text-secondary)", fontSize: 10 }}>
-                    {isExpanded ? "\u25BC" : "\u25B6"}
-                  </span>
-                  <span style={{
-                    color: entry.is_jni ? "#d16d9e" : "#e06c75",
-                    fontWeight: 500,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    flex: 1,
-                  }}>
-                    {entry.func_name}
-                  </span>
-                  <span style={{
-                    marginLeft: 6,
-                    color: "var(--text-secondary)",
-                    fontSize: 11,
-                    flexShrink: 0,
-                  }}>
-                    {entry.is_jni ? "JNI" : "SYS"} ({entry.occurrences.length})
-                  </span>
-                </div>
-              );
-            } else {
-              return (
-                <div
-                  key={`o-${row.func_name}-${row.seq}`}
-                  data-index={vItem.index}
-                  style={{
-                    position: "absolute",
-                    top: vItem.start,
-                    left: 0,
-                    right: 0,
-                    height: vItem.size,
-                    display: "flex",
-                    alignItems: "center",
-                    padding: "0 8px 0 28px",
-                    cursor: "pointer",
-                    fontSize: 12,
-                    background: selectedSeq === row.seq ? "var(--bg-selected)" : "transparent",
-                  }}
-                  onClick={() => { setSelectedSeq(row.seq); onJumpToSeq(row.seq); }}
-                  onMouseEnter={e => { if (selectedSeq !== row.seq) e.currentTarget.style.background = "var(--bg-row-odd)"; }}
-                  onMouseLeave={e => { if (selectedSeq !== row.seq) e.currentTarget.style.background = "transparent"; }}
-                >
-                  <span style={{ color: "var(--text-address)", marginRight: 8, flexShrink: 0 }}>
-                    #{row.seq + 1}
-                  </span>
-                  <span style={{
-                    color: "var(--text-primary)",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}>
-                    {row.summary.startsWith(row.func_name) ? row.summary.slice(row.func_name.length) : row.summary}
-                  </span>
-                </div>
-              );
-            }
-          })}
-        </div>
+      <div ref={vs.containerRef} style={{ flex: 1, ...vs.containerStyle }}>
+        {Array.from({ length: Math.max(0, vs.endIdx - vs.startIdx + 1) }, (_, i) => {
+          const index = vs.startIdx + i;
+          const row = rows[index];
+          if (!row) return null;
+          const y = vs.getItemY(index);
+          if (row.type === "group") {
+            const { entry, isExpanded } = row;
+            return (
+              <div
+                key={`g-${entry.func_name}`}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: 22,
+                  transform: `translateY(${y}px)`,
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "0 8px",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  userSelect: "none",
+                }}
+                onClick={() => toggleExpand(entry.func_name)}
+                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setCtxMenu({ x: e.clientX, y: e.clientY, funcName: entry.func_name }); }}
+                onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-row-odd)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+              >
+                <span style={{ width: 12, textAlign: "center", flexShrink: 0, color: "var(--text-secondary)", fontSize: 10 }}>
+                  {isExpanded ? "\u25BC" : "\u25B6"}
+                </span>
+                <span style={{
+                  color: entry.is_jni ? "#d16d9e" : "#e06c75",
+                  fontWeight: 500,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  flex: 1,
+                }}>
+                  {entry.func_name}
+                </span>
+                <span style={{
+                  marginLeft: 6,
+                  color: "var(--text-secondary)",
+                  fontSize: 11,
+                  flexShrink: 0,
+                }}>
+                  {entry.is_jni ? "JNI" : "SYS"} ({entry.occurrences.length})
+                </span>
+              </div>
+            );
+          } else {
+            return (
+              <div
+                key={`o-${row.func_name}-${row.seq}`}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: 22,
+                  transform: `translateY(${y}px)`,
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "0 8px 0 28px",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  background: selectedSeq === row.seq ? "var(--bg-selected)" : "transparent",
+                }}
+                onClick={() => { setSelectedSeq(row.seq); onJumpToSeq(row.seq); }}
+                onMouseEnter={e => { if (selectedSeq !== row.seq) e.currentTarget.style.background = "var(--bg-row-odd)"; }}
+                onMouseLeave={e => { if (selectedSeq !== row.seq) e.currentTarget.style.background = "transparent"; }}
+              >
+                <span style={{ color: "var(--text-address)", marginRight: 8, flexShrink: 0 }}>
+                  #{row.seq + 1}
+                </span>
+                <span style={{
+                  color: "var(--text-primary)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}>
+                  {row.summary.startsWith(row.func_name) ? row.summary.slice(row.func_name.length) : row.summary}
+                </span>
+              </div>
+            );
+          }
+        })}
       </div>
 
       {ctxMenu && (

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { useVirtualizerNoSync } from "../hooks/useVirtualizerNoSync";
+import { useVirtualScroll } from "../hooks/useVirtualScroll";
 import { useResizableColumn } from "../hooks/useResizableColumn";
 import ContextMenu, { ContextMenuItem } from "./ContextMenu";
 import type { StringRecordDto, StringsResult, StringXRef } from "../types/trace";
@@ -48,7 +48,6 @@ export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq, st
   const historyBlurTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const searchWrapperRef = useRef<HTMLDivElement>(null);
 
-  const parentRef = useRef<HTMLDivElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const minLenTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const pendingRef = useRef(0);
@@ -151,21 +150,14 @@ export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq, st
   }, [minLenInput]);
 
   // ── 虚拟滚动 ──
-  const virtualizer = useVirtualizerNoSync({
-    count: strings.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT,
-    overscan: 20,
-  });
+  const vs = useVirtualScroll({ totalCount: strings.length, rowHeight: ROW_HEIGHT, overscan: 20 });
 
   // ── 无限滚动加载更多 ──
-  const virtualItems = virtualizer.getVirtualItems();
-  const lastVirtualItemIndex = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1].index : -1;
   useEffect(() => {
-    if (lastVirtualItemIndex >= strings.length - 50 && strings.length < total && !loading) {
+    if (vs.endIdx >= strings.length - 50 && strings.length < total && !loading) {
       loadStrings(strings.length, false);
     }
-  }, [lastVirtualItemIndex, strings.length, total, loading, loadStrings]);
+  }, [vs.endIdx, strings.length, total, loading, loadStrings]);
 
   // ── 点击行：选中 + 跳转 trace 表 ──
   const handleRowClick = useCallback((record: StringRecordDto) => {
@@ -370,53 +362,50 @@ export default function StringsPanel({ sessionId, isPhase2Ready, onJumpToSeq, st
       </div>
 
       {/* 虚拟滚动列表 */}
-      <div ref={parentRef} style={{ flex: 1, overflow: "auto" }}>
-        <div style={{ height: virtualizer.getTotalSize(), width: "100%", position: "relative" }}>
-          {virtualItems.map(virtualRow => {
-            const record = strings[virtualRow.index];
-            if (!record) return null;
-            const isSelected = record.idx === selectedIdx;
-            return (
-              <div
-                key={virtualRow.key}
-                data-index={virtualRow.index}
-                ref={virtualizer.measureElement}
-                onClick={() => handleRowClick(record)}
-                onDoubleClick={() => handleRowDoubleClick(record)}
-                onContextMenu={e => handleContextMenu(e, record)}
-                style={{
-                  position: "absolute", top: 0, left: 0, width: "100%", height: ROW_HEIGHT,
-                  transform: `translateY(${virtualRow.start}px)`,
-                  display: "flex", alignItems: "center", padding: "0 8px",
-                  cursor: "pointer", fontSize: "var(--font-size-sm)",
-                  background: isSelected ? "var(--bg-selected)"
-                    : virtualRow.index % 2 === 0 ? "var(--bg-row-even)" : "var(--bg-row-odd)",
-                }}
-                onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "var(--bg-hover)"; }}
-                onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = virtualRow.index % 2 === 0 ? "var(--bg-row-even)" : "var(--bg-row-odd)"; }}
-              >
-                <span style={{ width: rwCol.width, flexShrink: 0, color: record.rw === "R" ? "var(--syntax-keyword)" : "var(--syntax-number)" }}>{record.rw}</span>
-                <span style={{ width: 8, flexShrink: 0 }} />
-                <span style={{ width: seqCol.width, flexShrink: 0, color: "var(--syntax-number)" }}>{record.seq + 1}</span>
-                <span style={{ width: 8, flexShrink: 0 }} />
-                <span style={{ width: addrCol.width, flexShrink: 0, color: "var(--syntax-literal)" }}>{record.addr}</span>
-                <span style={{ width: 8, flexShrink: 0 }} />
-                <span style={{
-                  flex: 1, color: "var(--syntax-string)",
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                }}>"{record.content}"</span>
-                <span style={{ width: 8, flexShrink: 0 }} />
-                <span style={{ width: encCol.width, flexShrink: 0, color: "var(--text-secondary)" }}>{record.encoding}</span>
-                <span style={{ width: 8, flexShrink: 0 }} />
-                <span style={{ width: lenCol.width, flexShrink: 0 }}>{record.byte_len}</span>
-                <span style={{ width: 8, flexShrink: 0 }} />
-                <span style={{ width: xrefsCol.width, flexShrink: 0, color: record.xref_count > 0 ? "var(--syntax-keyword)" : "var(--text-secondary)" }}>
-                  {record.xref_count}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+      <div ref={vs.containerRef} style={{ flex: 1, ...vs.containerStyle }}>
+        {Array.from({ length: Math.max(0, vs.endIdx - vs.startIdx + 1) }, (_, i) => {
+          const index = vs.startIdx + i;
+          const record = strings[index];
+          if (!record) return null;
+          const isSelected = record.idx === selectedIdx;
+          return (
+            <div
+              key={index}
+              onClick={() => handleRowClick(record)}
+              onDoubleClick={() => handleRowDoubleClick(record)}
+              onContextMenu={e => handleContextMenu(e, record)}
+              style={{
+                position: "absolute", top: 0, left: 0, width: "100%", height: ROW_HEIGHT,
+                transform: `translateY(${vs.getItemY(index)}px)`,
+                display: "flex", alignItems: "center", padding: "0 8px",
+                cursor: "pointer", fontSize: "var(--font-size-sm)",
+                background: isSelected ? "var(--bg-selected)"
+                  : index % 2 === 0 ? "var(--bg-row-even)" : "var(--bg-row-odd)",
+              }}
+              onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = index % 2 === 0 ? "var(--bg-row-even)" : "var(--bg-row-odd)"; }}
+            >
+              <span style={{ width: rwCol.width, flexShrink: 0, color: record.rw === "R" ? "var(--syntax-keyword)" : "var(--syntax-number)" }}>{record.rw}</span>
+              <span style={{ width: 8, flexShrink: 0 }} />
+              <span style={{ width: seqCol.width, flexShrink: 0, color: "var(--syntax-number)" }}>{record.seq + 1}</span>
+              <span style={{ width: 8, flexShrink: 0 }} />
+              <span style={{ width: addrCol.width, flexShrink: 0, color: "var(--syntax-literal)" }}>{record.addr}</span>
+              <span style={{ width: 8, flexShrink: 0 }} />
+              <span style={{
+                flex: 1, color: "var(--syntax-string)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}>"{record.content}"</span>
+              <span style={{ width: 8, flexShrink: 0 }} />
+              <span style={{ width: encCol.width, flexShrink: 0, color: "var(--text-secondary)" }}>{record.encoding}</span>
+              <span style={{ width: 8, flexShrink: 0 }} />
+              <span style={{ width: lenCol.width, flexShrink: 0 }}>{record.byte_len}</span>
+              <span style={{ width: 8, flexShrink: 0 }} />
+              <span style={{ width: xrefsCol.width, flexShrink: 0, color: record.xref_count > 0 ? "var(--syntax-keyword)" : "var(--text-secondary)" }}>
+                {record.xref_count}
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       {loading && (

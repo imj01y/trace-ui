@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { emit } from "@tauri-apps/api/event";
-import { useVirtualizerNoSync } from "../hooks/useVirtualizerNoSync";
+import { useVirtualScroll } from "../hooks/useVirtualScroll";
 import { useResizableColumn } from "../hooks/useResizableColumn";
 import ContextMenu, { ContextMenuItem } from "./ContextMenu";
 import type { CryptoMatch, CryptoScanResult } from "../types/trace";
@@ -29,8 +29,6 @@ export default function CryptoPanel({ cryptoResults, cryptoScanning, onJumpToSeq
   const [algoFilter, setAlgoFilter] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; match: CryptoMatch } | null>(null);
 
-  const parentRef = useRef<HTMLDivElement>(null);
-
   const filtered = useMemo(() => {
     if (!cryptoResults) return [];
     let items = cryptoResults.matches;
@@ -49,13 +47,7 @@ export default function CryptoPanel({ cryptoResults, cryptoScanning, onJumpToSeq
     return items;
   }, [cryptoResults, search, algoFilter]);
 
-  const virtualizer = useVirtualizerNoSync({
-    count: filtered.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT,
-    overscan: 20,
-  });
-  const virtualItems = virtualizer.getVirtualItems();
+  const vs = useVirtualScroll({ totalCount: filtered.length, rowHeight: ROW_HEIGHT, overscan: 20 });
 
   const handleRowClick = useCallback((match: CryptoMatch) => {
     setSelectedSeq(match.seq);
@@ -180,51 +172,48 @@ export default function CryptoPanel({ cryptoResults, cryptoScanning, onJumpToSeq
       </div>
 
       {/* Virtual list */}
-      <div ref={parentRef} style={{ flex: 1, overflow: "auto" }}>
+      <div ref={vs.containerRef} style={{ flex: 1, ...vs.containerStyle }}>
         {filtered.length === 0 ? (
           <div style={{ padding: 16, textAlign: "center", color: "var(--text-secondary)", fontSize: 12 }}>
             No matches for current filter
           </div>
         ) : (
-          <div style={{ height: virtualizer.getTotalSize(), width: "100%", position: "relative" }}>
-            {virtualItems.map(virtualRow => {
-              const match = filtered[virtualRow.index];
-              if (!match) return null;
-              const isSelected = match.seq === selectedSeq;
-              return (
-                <div
-                  key={virtualRow.key}
-                  data-index={virtualRow.index}
-                  ref={virtualizer.measureElement}
-                  onClick={() => handleRowClick(match)}
-                  onContextMenu={e => handleContextMenu(e, match)}
-                  style={{
-                    position: "absolute", top: 0, left: 0, width: "100%", height: ROW_HEIGHT,
-                    transform: `translateY(${virtualRow.start}px)`,
-                    display: "flex", alignItems: "center", padding: "0 8px",
-                    cursor: "pointer", fontSize: "var(--font-size-sm)",
-                    background: isSelected ? "var(--bg-selected)"
-                      : virtualRow.index % 2 === 0 ? "var(--bg-row-even)" : "var(--bg-row-odd)",
-                  }}
-                  onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "var(--bg-hover)"; }}
-                  onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = virtualRow.index % 2 === 0 ? "var(--bg-row-even)" : "var(--bg-row-odd)"; }}
-                >
-                  <span style={{ width: seqCol.width, flexShrink: 0, color: "var(--syntax-number)" }}>{match.seq + 1}</span>
-                  <span style={{ width: 8, flexShrink: 0 }} />
-                  <span style={{ width: algoCol.width, flexShrink: 0, color: "var(--syntax-keyword)" }}>{match.algorithm}</span>
-                  <span style={{ width: 8, flexShrink: 0 }} />
-                  <span style={{ width: magicCol.width, flexShrink: 0, color: "var(--syntax-literal)" }}>{match.magic_hex}</span>
-                  <span style={{ width: 8, flexShrink: 0 }} />
-                  <span style={{ width: addrCol.width, flexShrink: 0, color: "var(--syntax-literal)" }}>{match.address}</span>
-                  <span style={{ width: 8, flexShrink: 0 }} />
-                  <span style={{
-                    flex: 1, color: "var(--text-primary)",
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}>{match.disasm}</span>
-                </div>
-              );
-            })}
-          </div>
+          Array.from({ length: Math.max(0, vs.endIdx - vs.startIdx + 1) }, (_, i) => {
+            const index = vs.startIdx + i;
+            const match = filtered[index];
+            if (!match) return null;
+            const isSelected = match.seq === selectedSeq;
+            return (
+              <div
+                key={index}
+                onClick={() => handleRowClick(match)}
+                onContextMenu={e => handleContextMenu(e, match)}
+                style={{
+                  position: "absolute", top: 0, left: 0, width: "100%", height: ROW_HEIGHT,
+                  transform: `translateY(${vs.getItemY(index)}px)`,
+                  display: "flex", alignItems: "center", padding: "0 8px",
+                  cursor: "pointer", fontSize: "var(--font-size-sm)",
+                  background: isSelected ? "var(--bg-selected)"
+                    : index % 2 === 0 ? "var(--bg-row-even)" : "var(--bg-row-odd)",
+                }}
+                onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "var(--bg-hover)"; }}
+                onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = index % 2 === 0 ? "var(--bg-row-even)" : "var(--bg-row-odd)"; }}
+              >
+                <span style={{ width: seqCol.width, flexShrink: 0, color: "var(--syntax-number)" }}>{match.seq + 1}</span>
+                <span style={{ width: 8, flexShrink: 0 }} />
+                <span style={{ width: algoCol.width, flexShrink: 0, color: "var(--syntax-keyword)" }}>{match.algorithm}</span>
+                <span style={{ width: 8, flexShrink: 0 }} />
+                <span style={{ width: magicCol.width, flexShrink: 0, color: "var(--syntax-literal)" }}>{match.magic_hex}</span>
+                <span style={{ width: 8, flexShrink: 0 }} />
+                <span style={{ width: addrCol.width, flexShrink: 0, color: "var(--syntax-literal)" }}>{match.address}</span>
+                <span style={{ width: 8, flexShrink: 0 }} />
+                <span style={{
+                  flex: 1, color: "var(--text-primary)",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>{match.disasm}</span>
+              </div>
+            );
+          })
         )}
       </div>
 
