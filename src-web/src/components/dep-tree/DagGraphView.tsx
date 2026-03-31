@@ -369,7 +369,7 @@ export default function DagGraphView({ graph, sessionId, exprMode }: Props) {
         ctx.fillStyle = DEPTH_COLORS[c];
         for (const i of buckets[c]) {
           ctx.strokeRect(layout.x[i] - NODE_W / 2, layout.y[i] - NODE_H / 2, NODE_W, NODE_H);
-          ctx.fillText(nodes[i].operation || `#${nodes[i].seq}`, layout.x[i], layout.y[i], NODE_W - 8);
+          ctx.fillText(nodes[i].operation || `#${nodes[i].seq + 1}`, layout.x[i], layout.y[i], NODE_W - 8);
         }
       }
     } else {
@@ -423,7 +423,7 @@ export default function DagGraphView({ graph, sessionId, exprMode }: Props) {
       ctx.fillStyle = "#5c6370";
       ctx.textBaseline = "top";
       for (const i of toRender) {
-        ctx.fillText(`#${nodes[i].seq}`, layout.x[i], layout.y[i] + 2, NODE_W - 8);
+        ctx.fillText(`#${nodes[i].seq + 1}`, layout.x[i], layout.y[i] + 2, NODE_W - 8);
       }
     }
 

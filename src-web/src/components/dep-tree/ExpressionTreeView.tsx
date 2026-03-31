@@ -176,7 +176,7 @@ function TreeNode({ seq, depth, nodeMap, childrenMap, expandedSet, sessionId, sc
           minWidth: 40,
           textAlign: "right",
         }}>
-          #{seq}
+          #{seq + 1}
         </span>
       </div>
 

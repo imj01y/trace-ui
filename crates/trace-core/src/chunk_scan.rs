@@ -304,14 +304,26 @@ pub fn scan_chunk(
             }
 
             if fully_unresolved {
-                // Case 1: All bytes unresolved — defer entirely to fixup
-                // Undo any deps that were pushed (none in fully_unresolved case)
+                // Case 1: All bytes unresolved — defer memory deps to fixup.
+                // Register deps with LOCAL definitions are added directly here;
+                // only truly unresolved registers are deferred to merge-time fixup.
+                // (Previously, ALL register deps were skipped and deferred, which
+                // caused the merge pass to use stale global_reg_last_def values
+                // instead of correct local definitions from the same chunk.)
+                let mut deferred_uses = SmallVec::new();
+                for r in &uses {
+                    if let Some(&def_line) = reg_last_def.get(r) {
+                        deps.push_unique(def_line);
+                    } else {
+                        deferred_uses.push(*r);
+                    }
+                }
                 unresolved_loads.push(UnresolvedLoad {
                     line: i,
                     addr: mem.abs,
                     width,
                     load_value: mem.value,
-                    uses: uses.clone(),
+                    uses: deferred_uses,
                 });
                 skip_register_deps = true;
             } else if any_byte_unresolved {
