@@ -24,7 +24,7 @@ const MAX_DEP_NODES: u32 = 200;
 const DEFAULT_SEARCH: u32 = 30;
 
 fn json(val: &impl serde::Serialize) -> String {
-    serde_json::to_string_pretty(val).unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {}\"}}", e))
+    serde_json::to_string(val).unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {}\"}}", e))
 }
 
 /// Run a blocking closure on the tokio blocking thread pool to avoid starving
@@ -44,8 +44,11 @@ fn compact_line(line: &TraceLine) -> serde_json::Value {
     let mut obj = serde_json::json!({
         "seq": line.seq,
         "address": line.address,
-        "disasm": line.disasm,
     });
+    if !line.so_offset.is_empty() {
+        obj["so_offset"] = serde_json::json!(line.so_offset);
+    }
+    obj["disasm"] = serde_json::json!(line.disasm);
     if !line.changes.is_empty() {
         obj["changes"] = serde_json::json!(line.changes);
     }
@@ -93,6 +96,47 @@ fn is_stack_only_change(changes: &str) -> bool {
     has_any
 }
 
+/// Parse address range string like "0x246F00-0x249800"
+fn parse_addr_range(range: &str) -> Result<(u64, u64), String> {
+    let parts: Vec<&str> = range.split('-').collect();
+    if parts.len() != 2 {
+        return Err(format!(
+            "Invalid addr_range format '{}'. Expected: '0x246F00-0x249800'", range
+        ));
+    }
+    let start = parse_hex_addr(parts[0].trim())?;
+    let end = parse_hex_addr(parts[1].trim())?;
+    if start > end {
+        return Err(format!("Invalid addr_range: start (0x{:x}) > end (0x{:x})", start, end));
+    }
+    Ok((start, end))
+}
+
+/// Parse seq range string like "3000-6000"
+fn parse_seq_range(range: &str) -> Result<(u32, u32), String> {
+    let parts: Vec<&str> = range.split('-').collect();
+    if parts.len() != 2 {
+        return Err(format!(
+            "Invalid seq_range format '{}'. Expected: '3000-6000'", range
+        ));
+    }
+    let start: u32 = parts[0].trim().parse()
+        .map_err(|_| format!("Invalid start seq: '{}'", parts[0].trim()))?;
+    let end: u32 = parts[1].trim().parse()
+        .map_err(|_| format!("Invalid end seq: '{}'", parts[1].trim()))?;
+    if start > end {
+        return Err(format!("Invalid seq_range: start ({}) > end ({})", start, end));
+    }
+    Ok((start, end))
+}
+
+/// Check if TraceLine's SO offset falls within an address range
+fn line_in_addr_range(line: &TraceLine, start: u64, end: u64) -> bool {
+    parse_hex_addr(&line.so_offset)
+        .map(|offset| offset >= start && offset <= end)
+        .unwrap_or(false)
+}
+
 #[derive(Clone)]
 pub struct TraceToolHandler {
     engine: Arc<TraceEngine>,
@@ -114,12 +158,31 @@ impl TraceToolHandler {
         }
     }
 
+    /// Implicit session resolution: auto-resolve when only one session is open
+    fn resolve_session(&self, session_id: Option<String>) -> Result<String, String> {
+        match session_id {
+            Some(id) => Ok(id),
+            None => {
+                let sessions = self.engine.list_sessions();
+                match sessions.len() {
+                    0 => Err("No active session. Call open_trace first.".into()),
+                    1 => Ok(sessions[0].session_id.clone()),
+                    n => Err(format!(
+                        "Multiple sessions active ({}). Please specify session_id. \
+                         Use list_sessions to see all sessions.", n
+                    )),
+                }
+            }
+        }
+    }
+
     // ━━━━━━━━━━━━━━━━━━━━━━ 会话管理 ━━━━━━━━━━━━━━━━━━━━━━
 
     #[tool(
         name = "open_trace",
         description = "Open a trace file and build its index. This is the first step before any analysis. \
-            Returns session info including session_id needed for all subsequent operations. \
+            Returns session info including session_id, module_name, entry_address, trace_format, \
+            function_count, and other metadata needed for all subsequent operations. \
             Building the index may take a few seconds for large files."
     )]
     async fn open_trace(&self, Parameters(req): Parameters<OpenTraceRequest>) -> Result<String, String> {
@@ -135,14 +198,35 @@ impl TraceToolHandler {
             };
 
             match engine.build_index(&session_id, options, None) {
-                Ok(build) => Ok(json(&serde_json::json!({
-                    "session_id": session_id,
-                    "file_path": session.file_path,
-                    "file_size": session.file_size,
-                    "total_lines": build.total_lines,
-                    "has_string_index": build.has_string_index,
-                    "from_cache": build.from_cache,
-                }))),
+                Ok(build) => {
+                    // Extract additional info (graceful fallback on failure)
+                    let module_name = engine.get_lines(&session_id, &[0])
+                        .ok()
+                        .and_then(|lines| lines.first().and_then(|l| l.so_name.clone()));
+
+                    let entry_address = engine.get_call_tree_children(&session_id, 0, true)
+                        .ok()
+                        .and_then(|nodes| nodes.first().map(|n| n.func_addr.clone()));
+
+                    let trace_format = engine.get_session_info(&session_id)
+                        .ok()
+                        .and_then(|info| info.trace_format.map(|f| format!("{:?}", f)));
+
+                    let function_count = engine.get_call_tree_node_count(&session_id).ok();
+
+                    Ok(json(&serde_json::json!({
+                        "session_id": session_id,
+                        "file_path": session.file_path,
+                        "file_size": session.file_size,
+                        "total_lines": build.total_lines,
+                        "has_string_index": build.has_string_index,
+                        "from_cache": build.from_cache,
+                        "module_name": module_name,
+                        "entry_address": entry_address,
+                        "trace_format": trace_format,
+                        "function_count": function_count,
+                    })))
+                },
                 Err(e) => {
                     let _ = engine.close_session(&session_id);
                     Err(format!("Failed to build index: {}", e))
@@ -176,7 +260,8 @@ impl TraceToolHandler {
             total line count, and whether taint analysis results exist."
     )]
     fn get_session_info(&self, Parameters(req): Parameters<GetSessionInfoRequest>) -> Result<String, String> {
-        self.engine.get_session_info(&req.session_id)
+        let sid = self.resolve_session(req.session_id)?;
+        self.engine.get_session_info(&sid)
             .map(|info| json(&info))
             .map_err(|e| e.to_string())
     }
@@ -191,10 +276,11 @@ impl TraceToolHandler {
             Returns up to 100 lines per call."
     )]
     fn get_trace_lines(&self, Parameters(req): Parameters<GetTraceLinesRequest>) -> Result<String, String> {
+        let sid = self.resolve_session(req.session_id)?;
         let count = req.count.min(MAX_LINES);
         let end = req.start_seq.saturating_add(count);
         let seqs: Vec<u32> = (req.start_seq..end).collect();
-        let lines = self.engine.get_lines(&req.session_id, &seqs)
+        let lines = self.engine.get_lines(&sid, &seqs)
             .map_err(|e| e.to_string())?;
         Ok(json(&serde_json::json!({
             "lines": format_lines(&lines, req.full),
@@ -211,7 +297,8 @@ impl TraceToolHandler {
             which registers were modified by this instruction, and which were read."
     )]
     fn get_registers(&self, Parameters(req): Parameters<GetRegistersRequest>) -> Result<String, String> {
-        self.engine.get_registers_at(&req.session_id, req.seq)
+        let sid = self.resolve_session(req.session_id)?;
+        self.engine.get_registers_at(&sid, req.seq)
             .map(|regs| json(&regs))
             .map_err(|e| e.to_string())
     }
@@ -223,9 +310,10 @@ impl TraceToolHandler {
             Unknown bytes (never written) are marked in the 'known' array."
     )]
     fn get_memory(&self, Parameters(req): Parameters<GetMemoryRequest>) -> Result<String, String> {
+        let sid = self.resolve_session(req.session_id)?;
         let addr = parse_hex_addr(&req.address)?;
         let length = req.length.min(256);
-        self.engine.get_memory_at(&req.session_id, addr, req.seq, length)
+        self.engine.get_memory_at(&sid, addr, req.seq, length)
             .map(|snap| json(&snap))
             .map_err(|e| e.to_string())
     }
@@ -238,13 +326,14 @@ impl TraceToolHandler {
             Supports pagination with offset/limit."
     )]
     fn get_memory_history(&self, Parameters(req): Parameters<GetMemoryHistoryRequest>) -> Result<String, String> {
+        let sid = self.resolve_session(req.session_id)?;
         let addr = parse_hex_addr(&req.address)?;
         let limit = req.limit.min(MAX_HISTORY);
 
-        let meta = self.engine.get_mem_history_meta(&req.session_id, addr, req.center_seq)
+        let meta = self.engine.get_mem_history_meta(&sid, addr, req.center_seq)
             .map_err(|e| e.to_string())?;
 
-        let records = self.engine.get_mem_history_range(&req.session_id, addr, req.offset, limit)
+        let records = self.engine.get_mem_history_range(&sid, addr, req.offset, limit)
             .map_err(|e| e.to_string())?;
 
         Ok(json(&serde_json::json!({
@@ -263,9 +352,12 @@ impl TraceToolHandler {
         description = "Search for instructions matching a text or regex pattern in the trace. \
             Returns matching line numbers and a preview of each match. \
             Use regex for complex patterns like 'bl.*0x[0-9a-f]+' to find specific branch targets. \
-            Wrap pattern in /slashes/ for auto-regex detection."
+            Wrap pattern in /slashes/ for auto-regex detection. \
+            Supports optional seq_range ('3000-6000') and addr_range ('0x246F00-0x249800') filters \
+            to narrow results to a specific execution window or code region."
     )]
     async fn search_instructions(&self, Parameters(req): Parameters<SearchInstructionsRequest>) -> Result<String, String> {
+        let sid = self.resolve_session(req.session_id)?;
         let engine = self.engine.clone();
         blocking(move || {
             let max = req.max_results.unwrap_or(DEFAULT_SEARCH).min(MAX_SEARCH);
@@ -275,20 +367,58 @@ impl TraceToolHandler {
                 fuzzy: false,
                 max_results: Some(max),
             };
-            let result = engine.search(&req.session_id, &req.query, options)
+            let result = engine.search(&sid, &req.query, options)
                 .map_err(|e| e.to_string())?;
 
-            let preview_seqs: Vec<u32> = result.match_seqs.iter().copied().take(max as usize).collect();
-            let lines = engine.get_lines(&req.session_id, &preview_seqs)
+            // seq range filter
+            let filtered_seqs: Vec<u32> = if let Some(ref range) = req.seq_range {
+                let (start, end) = parse_seq_range(range)?;
+                result.match_seqs.iter()
+                    .copied()
+                    .filter(|&seq| seq >= start && seq <= end)
+                    .collect()
+            } else {
+                result.match_seqs.clone()
+            };
+
+            let total_after_seq_filter = filtered_seqs.len();
+
+            // Load lines (take more than needed to handle addr_range filtering)
+            let load_count = if req.addr_range.is_some() { (max as usize) * 3 } else { max as usize };
+            let preview_seqs: Vec<u32> = filtered_seqs.iter().copied().take(load_count).collect();
+            let lines = engine.get_lines(&sid, &preview_seqs)
                 .map_err(|e| e.to_string())?;
 
-            let matches = format_lines(&lines, req.full);
+            // addr_range filter
+            let final_lines: Vec<&TraceLine> = if let Some(ref range) = req.addr_range {
+                let (start, end) = parse_addr_range(range)?;
+                lines.iter()
+                    .filter(|l| line_in_addr_range(l, start, end))
+                    .take(max as usize)
+                    .collect()
+            } else {
+                lines.iter().take(max as usize).collect()
+            };
+
+            let matches: Vec<serde_json::Value> = if req.full {
+                final_lines.iter().map(|l| serde_json::to_value(l)
+                    .unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}))
+                ).collect()
+            } else {
+                final_lines.iter().map(|l| compact_line(l)).collect()
+            };
+
+            let effective_total = if req.seq_range.is_some() || req.addr_range.is_some() {
+                total_after_seq_filter
+            } else {
+                result.total_matches as usize
+            };
 
             Ok(json(&serde_json::json!({
                 "matches": matches,
-                "total_matches": result.total_matches,
+                "total_matches": effective_total,
                 "total_scanned": result.total_scanned,
-                "truncated": result.truncated,
+                "truncated": result.truncated || final_lines.len() < total_after_seq_filter,
             })))
         }).await
     }
@@ -304,6 +434,7 @@ impl TraceToolHandler {
             ['mem:0xbffff000@last'] traces the last write to that address."
     )]
     async fn run_taint_analysis(&self, Parameters(req): Parameters<RunTaintAnalysisRequest>) -> Result<String, String> {
+        let sid = self.resolve_session(req.session_id)?;
         let engine = self.engine.clone();
         blocking(move || {
             let options = SliceOptions {
@@ -311,7 +442,7 @@ impl TraceToolHandler {
                 end_seq: req.end_seq,
                 data_only: req.data_only,
             };
-            let result = engine.run_slice(&req.session_id, &req.from_specs, options)
+            let result = engine.run_slice(&sid, &req.from_specs, options)
                 .map_err(|e| e.to_string())?;
             Ok(json(&serde_json::json!({
                 "marked_count": result.marked_count,
@@ -330,9 +461,10 @@ impl TraceToolHandler {
             By default, filters out lines that only modify stack/frame pointer registers."
     )]
     fn get_tainted_lines(&self, Parameters(req): Parameters<GetTaintedLinesRequest>) -> Result<String, String> {
+        let sid = self.resolve_session(req.session_id)?;
         let limit = req.limit.min(200);
 
-        let all_seqs = self.engine.get_tainted_seqs(&req.session_id)
+        let all_seqs = self.engine.get_tainted_seqs(&sid)
             .map_err(|e| e.to_string())?;
 
         let total_tainted = all_seqs.len() as u32;
@@ -340,7 +472,7 @@ impl TraceToolHandler {
         // 栈操作过滤 + 分页
         let (lines, total_after_filter, stack_ops_filtered) = if req.ignore_stack_ops && !all_seqs.is_empty() {
             // 需要加载全部污点行以判断 is_stack_only_change
-            let all_lines = self.engine.get_lines(&req.session_id, &all_seqs)
+            let all_lines = self.engine.get_lines(&sid, &all_seqs)
                 .map_err(|e| e.to_string())?;
             // 先过滤，再分页，复用已加载的行数据
             let kept: Vec<TraceLine> = all_lines.into_iter()
@@ -360,13 +492,13 @@ impl TraceToolHandler {
                 .take(limit as usize)
                 .copied()
                 .collect();
-            let page_lines = self.engine.get_lines(&req.session_id, &page_seqs)
+            let page_lines = self.engine.get_lines(&sid, &page_seqs)
                 .map_err(|e| e.to_string())?;
             (page_lines, total_tainted, 0u32)
         };
 
         // 上下文摘要
-        let context = self.engine.get_slice_origin(&req.session_id)
+        let context = self.engine.get_slice_origin(&sid)
             .ok()
             .flatten()
             .map(|o| {
@@ -399,7 +531,8 @@ impl TraceToolHandler {
             Call this before running a new taint analysis if you want fresh results."
     )]
     fn clear_taint(&self, Parameters(req): Parameters<ClearTaintRequest>) -> Result<String, String> {
-        self.engine.clear_slice(&req.session_id)
+        let sid = self.resolve_session(req.session_id)?;
+        self.engine.clear_slice(&sid)
             .map(|()| "Taint results cleared.".to_string())
             .map_err(|e| e.to_string())
     }
@@ -412,6 +545,7 @@ impl TraceToolHandler {
             Target format: 'reg:X0' for a register (case-insensitive), 'mem:0xaddr' for a memory address."
     )]
     async fn get_dependency_tree(&self, Parameters(req): Parameters<GetDependencyTreeRequest>) -> Result<String, String> {
+        let sid = self.resolve_session(req.session_id)?;
         let engine = self.engine.clone();
         blocking(move || {
             let max_nodes = req.max_nodes.unwrap_or(MAX_DEP_NODES).min(MAX_DEP_NODES);
@@ -419,7 +553,7 @@ impl TraceToolHandler {
                 data_only: req.data_only,
                 max_nodes: Some(max_nodes),
             };
-            engine.build_dep_tree(&req.session_id, req.seq, &req.target, options)
+            engine.build_dep_tree(&sid, req.seq, &req.target, options)
                 .map(|graph| json(&graph))
                 .map_err(|e| e.to_string())
         }).await
@@ -434,7 +568,8 @@ impl TraceToolHandler {
             Useful for tracking register value propagation."
     )]
     fn get_def_use_chain(&self, Parameters(req): Parameters<GetDefUseChainRequest>) -> Result<String, String> {
-        self.engine.get_def_use_chain(&req.session_id, req.seq, &req.register.to_lowercase())
+        let sid = self.resolve_session(req.session_id)?;
+        self.engine.get_def_use_chain(&sid, req.seq, &req.register.to_lowercase())
             .map(|chain| json(&chain))
             .map_err(|e| e.to_string())
     }
@@ -449,7 +584,8 @@ impl TraceToolHandler {
             function address, name, entry/exit line numbers, and child node IDs."
     )]
     fn get_call_tree(&self, Parameters(req): Parameters<GetCallTreeRequest>) -> Result<String, String> {
-        self.engine.get_call_tree_children(&req.session_id, req.node_id, true)
+        let sid = self.resolve_session(req.session_id)?;
+        self.engine.get_call_tree_children(&sid, req.node_id, true)
             .map(|nodes| json(&nodes))
             .map_err(|e| e.to_string())
     }
@@ -460,7 +596,8 @@ impl TraceToolHandler {
             Returns the function's address, name, entry/exit lines, line count, and child calls."
     )]
     fn get_function_info(&self, Parameters(req): Parameters<GetFunctionInfoRequest>) -> Result<String, String> {
-        let nodes = self.engine.get_call_tree_children(&req.session_id, req.node_id, true)
+        let sid = self.resolve_session(req.session_id)?;
+        let nodes = self.engine.get_call_tree_children(&sid, req.node_id, true)
             .map_err(|e| e.to_string())?;
         match nodes.first() {
             Some(node) => Ok(json(node)),
@@ -475,7 +612,8 @@ impl TraceToolHandler {
             Useful for finding where specific functions are called."
     )]
     fn get_function_list(&self, Parameters(req): Parameters<GetFunctionListRequest>) -> Result<String, String> {
-        self.engine.get_function_calls(&req.session_id)
+        let sid = self.resolve_session(req.session_id)?;
+        self.engine.get_function_calls(&sid)
             .map(|result| json(&result))
             .map_err(|e| e.to_string())
     }
@@ -488,6 +626,7 @@ impl TraceToolHandler {
             Each string includes its memory address, content, encoding, and access type."
     )]
     fn get_strings(&self, Parameters(req): Parameters<GetStringsRequest>) -> Result<String, String> {
+        let sid = self.resolve_session(req.session_id)?;
         let limit = req.limit.min(200);
         let options = StringQueryOptions {
             min_len: req.min_len,
@@ -495,7 +634,7 @@ impl TraceToolHandler {
             limit,
             search: req.search,
         };
-        let result = self.engine.get_strings(&req.session_id, options)
+        let result = self.engine.get_strings(&sid, options)
             .map_err(|e| e.to_string())?;
         Ok(json(&serde_json::json!({
             "strings": result.strings,
@@ -512,8 +651,9 @@ impl TraceToolHandler {
             address, disassembly, and read/write type."
     )]
     fn get_string_xrefs(&self, Parameters(req): Parameters<GetStringXRefsRequest>) -> Result<String, String> {
+        let sid = self.resolve_session(req.session_id)?;
         let addr = parse_hex_addr(&req.address)?;
-        self.engine.get_string_xrefs(&req.session_id, addr, req.byte_len)
+        self.engine.get_string_xrefs(&sid, addr, req.byte_len)
             .map(|xrefs| json(&xrefs))
             .map_err(|e| e.to_string())
     }
@@ -525,12 +665,13 @@ impl TraceToolHandler {
             Returns matched algorithms and the instructions where they appear."
     )]
     async fn scan_crypto_patterns(&self, Parameters(req): Parameters<ScanCryptoPatternsRequest>) -> Result<String, String> {
+        let sid = self.resolve_session(req.session_id)?;
         let engine = self.engine.clone();
         blocking(move || {
-            if let Ok(Some(cached)) = engine.load_crypto_cache(&req.session_id) {
+            if let Ok(Some(cached)) = engine.load_crypto_cache(&sid) {
                 return Ok(json(&cached));
             }
-            engine.scan_crypto(&req.session_id)
+            engine.scan_crypto(&sid)
                 .map(|result| json(&result))
                 .map_err(|e| e.to_string())
         }).await
@@ -545,6 +686,7 @@ impl TraceToolHandler {
             Supports 'json' (structured with metadata) and 'txt' (raw tainted lines) formats."
     )]
     async fn export_taint_results(&self, Parameters(req): Parameters<ExportTaintResultsRequest>) -> Result<String, String> {
+        let sid = self.resolve_session(req.session_id)?;
         let engine = self.engine.clone();
         blocking(move || {
             // ExportConfig requires from_specs — retrieve from session's stored slice_origin
@@ -554,7 +696,7 @@ impl TraceToolHandler {
                 start_seq: None,
                 end_seq: None,
             };
-            engine.export_taint_results(&req.session_id, &req.output_path, &req.format, config)
+            engine.export_taint_results(&sid, &req.output_path, &req.format, config)
                 .map(|()| json(&serde_json::json!({
                     "exported": true,
                     "path": req.output_path,
@@ -572,6 +714,7 @@ impl TraceToolHandler {
             as it automatically uses the tainted instructions as the starting points."
     )]
     async fn build_dep_tree_from_slice(&self, Parameters(req): Parameters<BuildDepTreeFromSliceRequest>) -> Result<String, String> {
+        let sid = self.resolve_session(req.session_id)?;
         let engine = self.engine.clone();
         blocking(move || {
             let max_nodes = req.max_nodes.unwrap_or(MAX_DEP_NODES).min(MAX_DEP_NODES);
@@ -579,7 +722,7 @@ impl TraceToolHandler {
                 data_only: req.data_only,
                 max_nodes: Some(max_nodes),
             };
-            engine.build_dep_tree_from_slice(&req.session_id, options)
+            engine.build_dep_tree_from_slice(&sid, options)
                 .map(|graph| json(&graph))
                 .map_err(|e| e.to_string())
         }).await
@@ -592,7 +735,8 @@ impl TraceToolHandler {
             Returns register names like ['X0', 'X1']."
     )]
     fn get_line_def_registers(&self, Parameters(req): Parameters<GetLineDefRegistersRequest>) -> Result<String, String> {
-        self.engine.get_line_def_registers(&req.session_id, req.seq)
+        let sid = self.resolve_session(req.session_id)?;
+        self.engine.get_line_def_registers(&sid, req.seq)
             .map(|regs| json(&regs))
             .map_err(|e| e.to_string())
     }
@@ -603,7 +747,8 @@ impl TraceToolHandler {
             Useful for understanding the scale of the call tree before exploring it."
     )]
     fn get_call_tree_node_count(&self, Parameters(req): Parameters<GetCallTreeNodeCountRequest>) -> Result<String, String> {
-        self.engine.get_call_tree_node_count(&req.session_id)
+        let sid = self.resolve_session(req.session_id)?;
+        self.engine.get_call_tree_node_count(&sid)
             .map(|count| json(&serde_json::json!({ "node_count": count })))
             .map_err(|e| e.to_string())
     }
@@ -615,9 +760,10 @@ impl TraceToolHandler {
             will have data. This may take a while for large traces."
     )]
     async fn scan_strings(&self, Parameters(req): Parameters<ScanStringsRequest>) -> Result<String, String> {
+        let sid = self.resolve_session(req.session_id)?;
         let engine = self.engine.clone();
         blocking(move || {
-            engine.scan_strings(&req.session_id)
+            engine.scan_strings(&sid)
                 .map(|()| json(&serde_json::json!({
                     "status": "String scanning completed.",
                 })))
