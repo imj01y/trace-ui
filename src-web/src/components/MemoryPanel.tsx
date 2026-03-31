@@ -631,7 +631,7 @@ export default function MemoryPanel({ selectedSeq: selectedSeqProp, isPhase2Read
       )}
       <span style={{ flex: 1 }} />
       {/* 右侧：Auto + 搜索框 */}
-      <label style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-secondary)", cursor: "pointer", whiteSpace: "nowrap" }}>
+      <label title="Auto-track memory address accessed by the current instruction; scrolling temporarily disables tracking" style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-secondary)", cursor: "pointer", whiteSpace: "nowrap" }}>
         <input
           type="checkbox"
           checked={autoTrack}
@@ -910,7 +910,7 @@ export default function MemoryPanel({ selectedSeq: selectedSeqProp, isPhase2Read
                 borderBottom: "1px solid var(--border-color)",
                 fontSize: 11, color: "var(--text-secondary)", flexShrink: 0,
               }}>
-                Total: {historyTotal.toLocaleString()}
+                Memory accesses history  Total: {historyTotal.toLocaleString()}
               </div>
               <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
                 <div
