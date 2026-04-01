@@ -7,7 +7,7 @@ use rmcp::{
     tool, tool_handler, tool_router,
 };
 
-use trace_core::{TraceEngine, BuildOptions, SearchOptions, SliceOptions, StringQueryOptions, DepTreeOptions, parse_hex_addr, api_types::TraceLine};
+use trace_core::{TraceEngine, BuildOptions, SearchOptions, SliceOptions, StringQueryOptions, parse_hex_addr, api_types::TraceLine};
 use crate::types::*;
 
 // ── 截断常量 ──
@@ -17,8 +17,6 @@ use crate::types::*;
 const MAX_LINES: u32 = 100;
 // Referenced in: search_instructions description ("up to 200 results")
 const MAX_SEARCH: u32 = 200;
-// Referenced in: get_dependency_tree description ("up to 200 nodes")
-const MAX_DEP_NODES: u32 = 200;
 const DEFAULT_SEARCH: u32 = 30;
 
 fn json(val: &impl serde::Serialize) -> String {
@@ -490,34 +488,6 @@ impl TraceToolHandler {
         })))
     }
 
-    #[tool(
-        name = "get_dependency_tree",
-        description = "Build a dependency graph showing how a value at a specific instruction \
-            was computed. Returns a DAG of instructions connected by data/control dependencies. \
-            Useful for understanding the full computation chain of a value. \
-            Target format: 'reg:X0' for a register (case-insensitive), 'mem:0xaddr' for a memory address."
-    )]
-    async fn get_dependency_tree(&self, Parameters(req): Parameters<GetDependencyTreeRequest>) -> Result<String, String> {
-        let sid = self.resolve_session(req.session_id)?;
-        let engine = self.engine.clone();
-        blocking(move || {
-            let max_nodes = req.max_nodes.unwrap_or(MAX_DEP_NODES).min(MAX_DEP_NODES);
-            let options = DepTreeOptions {
-                data_only: req.data_only,
-                max_nodes: Some(max_nodes),
-            };
-            engine.build_dep_tree(&sid, req.seq, &req.target, options)
-                .map(|graph| {
-                    let mut val = serde_json::to_value(&graph)
-                        .unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}));
-                    val.as_object_mut().map(|o| {
-                        o.insert("hint".to_string(), serde_json::json!("Nodes with is_leaf=true are the ultimate data sources."));
-                    });
-                    json(&val)
-                })
-                .map_err(|e| e.to_string())
-        }).await
-    }
 
     // ━━━━━━━━━━━━━━━━━━━━━━ 结构信息 ━━━━━━━━━━━━━━━━━━━━━━
 

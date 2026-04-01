@@ -99,21 +99,6 @@ pub struct GetTaintedLinesRequest {
 fn default_taint_limit() -> u32 { 50 }
 fn default_true() -> bool { true }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetDependencyTreeRequest {
-    #[schemars(description = "Session ID (optional if only one session is open)")]
-    pub session_id: Option<String>,
-    #[schemars(description = "Line number (0-based) to build dependency tree from")]
-    pub seq: u32,
-    #[schemars(description = "Target: 'reg:X0' for register (case-insensitive), 'mem:0xaddr' for memory address")]
-    pub target: String,
-    #[schemars(description = "Only data dependencies (no control flow)")]
-    #[serde(default)]
-    pub data_only: bool,
-    #[schemars(description = "Max nodes in the graph (default: 200)")]
-    pub max_nodes: Option<u32>,
-}
-
 // ── 结构信息 ──
 
 #[derive(Debug, Deserialize, JsonSchema)]
