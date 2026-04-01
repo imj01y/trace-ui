@@ -268,6 +268,17 @@ impl super::TraceEngine {
                     call_tree: phase2.call_tree,
                 };
 
+                // fill_xref_counts：Phase2Archive 构建完成后，使用 flat view 计算 xref
+                // 此时使用 flat 数据而非原始 MemAccessIndex，内存更友好
+                let mut string_index = string_index;
+                if !string_index.strings.is_empty() {
+                    let mem_view = phase2_archive.mem_accesses.view();
+                    eprintln!("[index] computing xref counts from flat view...");
+                    let t_xref = std::time::Instant::now();
+                    crate::query::strings::StringBuilder::fill_xref_counts_view(&mut string_index, &mem_view);
+                    eprintln!("[index] xref counts done: {:?}", t_xref.elapsed());
+                }
+
                 let scan_state = &scan_result.scan_state;
                 let scan_archive = ScanArchive {
                     deps: convert::deps_to_flat(&scan_state.deps),

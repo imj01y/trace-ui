@@ -836,14 +836,10 @@ pub fn merge_all_chunks(
         if let Some(ref cb) = progress_fn { cb(0.97); }
 
         let t2 = std::time::Instant::now();
-        let mut si = sb.finish();
+        let si = sb.finish();
         eprintln!("[perf] StringBuilder.finish(): {:?} ({} strings)", t2.elapsed(), si.strings.len());
 
-        let t3 = std::time::Instant::now();
-        crate::query::strings::StringBuilder::fill_xref_counts(&mut si, &mem_accesses);
-        eprintln!("[perf] fill_xref_counts: {:?}", t3.elapsed());
-
-        eprintln!("[perf] StringIndex total (build+finish+xref): {:?}", t.elapsed());
+        eprintln!("[perf] StringIndex total (build+finish, xref deferred): {:?}", t.elapsed());
         si
     } else {
         Default::default()
