@@ -171,20 +171,6 @@ pub struct GetCallTreeRequest {
 
 fn default_depth() -> u32 { 1 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetFunctionListRequest {
-    #[schemars(description = "Session ID (optional if only one session is open)")]
-    pub session_id: Option<String>,
-    #[schemars(description = "Filter functions by name (partial match, case-insensitive)")]
-    pub search: Option<String>,
-    #[schemars(description = "Pagination offset (default: 0)")]
-    #[serde(default)]
-    pub offset: u32,
-    #[schemars(description = "Max functions to return (default: 30, max: 100)")]
-    #[serde(default = "default_func_list_limit")]
-    pub limit: u32,
-}
-
 fn default_func_list_limit() -> u32 { 30 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -260,8 +246,15 @@ pub struct AnalyzeFunctionRequest {
     pub session_id: Option<String>,
     #[schemars(description = "Call tree node ID for detailed analysis of a specific function call (from get_call_tree)")]
     pub node_id: Option<u32>,
-    #[schemars(description = "Search for all calls to functions matching this name (partial, case-insensitive)")]
+    #[schemars(description = "Search for all calls to functions matching this name (partial, case-insensitive). \
+        Omit both node_id and func_name to list all functions.")]
     pub func_name: Option<String>,
+    #[schemars(description = "Pagination offset when listing functions (default: 0)")]
+    #[serde(default)]
+    pub offset: u32,
+    #[schemars(description = "Max functions to return when listing (default: 30, max: 100)")]
+    #[serde(default = "default_func_list_limit")]
+    pub limit: u32,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

@@ -648,51 +648,6 @@ impl TraceToolHandler {
     }
 
     #[tool(
-        name = "get_function_list",
-        description = "Get an aggregated list of function calls found in the trace. \
-            Supports search filtering by name (case-insensitive partial match) and pagination. \
-            Each entry shows func_name, call_count, and is_jni flag."
-    )]
-    fn get_function_list(&self, Parameters(req): Parameters<GetFunctionListRequest>) -> Result<String, String> {
-        let sid = self.resolve_session(req.session_id)?;
-        let result = self.engine.get_function_calls(&sid)
-            .map_err(|e| e.to_string())?;
-
-        let limit = req.limit.min(100);
-
-        // Filter by search
-        let filtered: Vec<&trace_core::api_types::FunctionCallEntry> = if let Some(ref search) = req.search {
-            let query_lower = search.to_lowercase();
-            result.functions.iter()
-                .filter(|f| f.func_name.to_lowercase().contains(&query_lower))
-                .collect()
-        } else {
-            result.functions.iter().collect()
-        };
-
-        let total = filtered.len() as u32;
-
-        // Pagination
-        let page: Vec<serde_json::Value> = filtered.iter()
-            .skip(req.offset as usize)
-            .take(limit as usize)
-            .map(|f| serde_json::json!({
-                "func_name": f.func_name,
-                "call_count": f.occurrences.len(),
-                "is_jni": f.is_jni,
-            }))
-            .collect();
-
-        Ok(json(&serde_json::json!({
-            "functions": page,
-            "total": total,
-            "total_calls": result.total_calls,
-            "offset": req.offset,
-            "has_more": (req.offset + page.len() as u32) < total,
-        })))
-    }
-
-    #[tool(
         name = "get_strings",
         description = "List runtime strings found in the trace. \
             These are strings observed in memory during execution. \
@@ -855,10 +810,10 @@ impl TraceToolHandler {
 
     #[tool(
         name = "analyze_function",
-        description = "Analyze a function call. Two modes: \
-            (1) node_id: detailed analysis with entry arguments (X0-X7) and return value (X0). \
-            (2) func_name: find all calls matching a name. \
-            Provide exactly one of node_id or func_name."
+        description = "Analyze functions. Three modes: \
+            (1) node_id: detailed analysis of one call with entry args (X0-X7) and return value (X0). \
+            (2) func_name: find all calls matching a name (partial, case-insensitive). \
+            (3) No arguments: list all functions with pagination (use offset/limit)."
     )]
     fn analyze_function(&self, Parameters(req): Parameters<AnalyzeFunctionRequest>) -> Result<String, String> {
         let sid = self.resolve_session(req.session_id)?;
@@ -948,15 +903,37 @@ impl TraceToolHandler {
                 "matched_functions": matched.len(),
                 "functions": matched,
                 "hint": if matched.is_empty() {
-                    "No functions matched. Try a broader search term or use get_function_list to see all functions."
+                    "No functions matched. Try a broader search term or use analyze_function with no arguments to list all functions."
                 } else {
                     "Use analyze_function with node_id from get_call_tree to inspect a specific call's arguments and return value."
                 },
             })))
 
         } else {
-            Err("Provide either node_id or func_name. \
-                Example: {\"node_id\": 5} for call details, or {\"func_name\": \"malloc\"} to search.".into())
+            // Mode 3: list all functions with pagination
+            let result = self.engine.get_function_calls(&sid)
+                .map_err(|e| e.to_string())?;
+
+            let limit = req.limit.min(100) as usize;
+            let total = result.functions.len();
+            let page: Vec<serde_json::Value> = result.functions.iter()
+                .skip(req.offset as usize)
+                .take(limit)
+                .map(|f| serde_json::json!({
+                    "func_name": f.func_name,
+                    "call_count": f.occurrences.len(),
+                    "is_jni": f.is_jni,
+                }))
+                .collect();
+
+            Ok(json(&serde_json::json!({
+                "functions": page,
+                "total": total,
+                "total_calls": result.total_calls,
+                "offset": req.offset,
+                "has_more": (req.offset as usize + page.len()) < total,
+                "hint": "Use analyze_function with func_name to search, or node_id for detailed analysis with entry arguments.",
+            })))
         }
     }
 
@@ -1031,7 +1008,7 @@ impl ServerHandler for TraceToolHandler {
             "Trace UI MCP Server — analyze ARM64 execution traces.\n\n\
              Workflow:\n\
              1. Start: open_trace with file path → get session overview\n\
-             2. Overview: get_function_list, analyze_crypto to detect algorithms\n\
+             2. Overview: analyze_function (no args) to list functions, analyze_crypto to detect algorithms\n\
              3. Locate: search_instructions (supports seq_range/addr_range filtering)\n\
              4. Trace: taint_analysis to track data flow (returns stats + first page of results)\n\
              5. Deep dive: get_dependency_tree or get_def_use_chain on specific instructions\n\
