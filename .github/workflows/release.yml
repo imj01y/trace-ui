@@ -120,4 +120,41 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*
-          generate_release_notes: true
+          generate_release_notes: false
+          body: |
+            ## v0.5.8 更新日志
+
+            ### 🔧 MCP 工具层重大优化
+
+            - **工具精简 22 → 10**：移除低频/冗余工具，降低 AI 工具选择困难和上下文开销
+            - **新增 3 个高层组合工具**：
+              - `taint_analysis` — 一次调用完成污点分析 + 返回首页结果（替代原 run_taint_analysis + get_tainted_lines 两步流程）
+              - `analyze_function` — 三合一函数分析（详细分析含入口参数 X0-X7 / 按名称搜索 / 列出所有函数）
+              - `analyze_crypto` — 密码算法检测 + 自动附带匹配点周围上下文代码
+            - **Compact JSON 输出**：所有工具输出改用紧凑 JSON，减少约 20% token 开销
+            - **隐式 Session**：单会话时所有工具可省略 session_id 参数
+            - **搜索增强**：`search_instructions` 新增 `seq_range` 和 `addr_range` 过滤参数
+            - **open_trace 增强**：返回模块名、入口地址、trace 格式、函数数量
+            - **get_call_tree 增强**：支持 `depth` 参数多层展开（1-3 层）
+            - **get_memory 增强**：`seq` 参数改为可选，默认使用 trace 最后一行
+            - **丰富的 AI 引导**：Server Instructions 包含完整工作流指南，关键工具返回 hint 字段
+
+            ### 🚀 字符串扫描性能优化
+
+            - **修复 building index 卡在 99% 的问题**：修复 `extract_strings_in_range` 在 `addr=u64::MAX` 时的无限循环
+            - **修复 OOM 崩溃**：预分配页数上限 1M，防止稀疏地址空间导致内存溢出
+            - **性能优化**：页级内存访问、rayon 并行排序、bitset 替代 bool 数组（内存减少 44%）、HashMap 容量预分配
+
+            ### ✨ 功能改进
+
+            - Call Tree 和 Functions 面板增加 Auto-follow 自动跟随功能
+            - 内存面板：支持自定义 hexdump 显示字节长度、右键菜单（复制 hexdump/hex/ascii/选中文本）
+            - 搜索：移除结果数限制，支持分页加载；修复快速滚动时空行问题
+            - 虚拟滚动：提取 useVirtualScroll hook，StringsPanel/CryptoPanel 支持 Minimap
+            - 依赖树：修复行号显示和并行扫描寄存器依赖丢失问题
+
+            ### 🐛 Bug 修复
+
+            - 修复 Linux 分数缩放下 Canvas 字体模糊和高亮错位
+            - 修复关闭文件时搜索窗口数据未清空
+            - 修复 ResizeObserver 在条件渲染延迟挂载时未建立

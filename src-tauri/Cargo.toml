@@ -1,6 +1,6 @@
 [package]
 name = "trace-ui"
-version = "0.5.7"
+version = "0.5.8"
 edition = "2021"
 description = "Desktop trace viewer for ARM64 execution traces"
 license = "LicenseRef-Personal-Use"
