@@ -214,6 +214,16 @@ pub fn extract_blr_target(parsed: &trace_parser::types::ParsedLine, line_str: &s
 
 /// 从 trace 行提取指令绝对地址
 pub fn extract_insn_addr(line: &str) -> u64 {
+    // QBDI 格式: 0xADDR: ... 或 0xADDR module+0xOFF: ...
+    if line.starts_with("0x") {
+        let rest = &line[2..];
+        let hex_end = rest.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(rest.len());
+        if hex_end > 0 {
+            if let Ok(addr) = u64::from_str_radix(&rest[..hex_end], 16) {
+                return addr;
+            }
+        }
+    }
     // 格式: ... ] 0xADDR: "mnemonic ..." (unidbg)
     //   或: ... ] 0xADDR!0xOFFSET ... (gumtrace)
     if let Some(pos) = line.find("] 0x") {
@@ -235,9 +245,23 @@ pub fn extract_insn_addr(line: &str) -> u64 {
 }
 
 /// 从 trace 行提取偏移地址
+/// qbdi:     `0xADDR module+0xOFFSET: ...` → OFFSET
 /// gumtrace: `0xADDR!0xOFFSET` → OFFSET
 /// unidbg:   `[libtiny.so 0x174250]` → 0x174250
 pub fn extract_insn_offset(line: &str) -> u64 {
+    // qbdi: 0xADDR module+0xOFFSET: ...
+    if line.starts_with("0x") {
+        if let Some(plus) = line.find('+') {
+            let after = &line[plus + 1..];
+            let after = after.strip_prefix("0x").unwrap_or(after);
+            let end = after.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(after.len());
+            if end > 0 {
+                if let Ok(v) = u64::from_str_radix(&after[..end], 16) {
+                    return v;
+                }
+            }
+        }
+    }
     // gumtrace: ...] 0xADDR!0xOFFSET ...
     if let Some(bracket_end) = line.find("] 0x") {
         let rest = &line[bracket_end + 4..];

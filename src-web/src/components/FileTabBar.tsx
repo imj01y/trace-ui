@@ -6,6 +6,7 @@ interface FileTab {
   fileName: string;
   filePath: string;
   isPhase2Ready: boolean;
+  traceFormat: string | null;
 }
 
 interface Props {
@@ -16,13 +17,19 @@ interface Props {
   onFloat: (sessionId: string, position?: { x: number; y: number }) => void;
 }
 
-export default function FileTabBar({ tabs, activeSessionId, onActivate, onClose, onFloat }: Props) {
+export default function FileTabBar({
+  tabs,
+  activeSessionId,
+  onActivate,
+  onClose,
+  onFloat,
+}: Props) {
   const handleClose = useCallback(
     (e: React.MouseEvent, sessionId: string) => {
       e.stopPropagation();
       onClose(sessionId);
     },
-    [onClose]
+    [onClose],
   );
 
   const startDrag = useDragToFloat({ onFloat, onActivate });
@@ -38,7 +45,8 @@ export default function FileTabBar({ tabs, activeSessionId, onActivate, onClose,
         flexShrink: 0,
         background: "var(--bg-secondary)",
         borderBottom: "1px solid var(--border-color)",
-        overflowX: "auto", overflowY: "hidden",
+        overflowX: "auto",
+        overflowY: "hidden",
         fontSize: "var(--font-size-sm)",
       }}
     >
@@ -61,7 +69,9 @@ export default function FileTabBar({ tabs, activeSessionId, onActivate, onClose,
               whiteSpace: "nowrap",
               background: isActive ? "var(--bg-primary)" : "transparent",
               color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
-              borderBottom: isActive ? "2px solid var(--btn-primary)" : "2px solid transparent",
+              borderBottom: isActive
+                ? "2px solid var(--btn-primary)"
+                : "2px solid transparent",
               userSelect: "none",
             }}
           >
@@ -75,9 +85,31 @@ export default function FileTabBar({ tabs, activeSessionId, onActivate, onClose,
                 background: tab.isPhase2Ready ? "#4caf50" : "#ff9800",
               }}
             />
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", maxWidth: 160 }}>
+            <span
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                maxWidth: 160,
+              }}
+            >
               {tab.fileName}
             </span>
+            {tab.traceFormat && (
+              <span
+                style={{
+                  fontSize: 9,
+                  padding: "0 4px",
+                  borderRadius: 3,
+                  background: "var(--bg-selected)",
+                  color: "var(--text-secondary)",
+                  flexShrink: 0,
+                  lineHeight: "16px",
+                  textTransform: "uppercase",
+                }}
+              >
+                {tab.traceFormat}
+              </span>
+            )}
             <span
               data-close-btn
               onClick={(e) => handleClose(e, tab.sessionId)}
@@ -95,10 +127,12 @@ export default function FileTabBar({ tabs, activeSessionId, onActivate, onClose,
                 cursor: "pointer",
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.background = "var(--bg-selected)";
+                (e.currentTarget as HTMLElement).style.background =
+                  "var(--bg-selected)";
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.background = "transparent";
+                (e.currentTarget as HTMLElement).style.background =
+                  "transparent";
               }}
             >
               ×

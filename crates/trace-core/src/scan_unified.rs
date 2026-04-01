@@ -13,6 +13,7 @@ use crate::scanner::{
 };
 use trace_parser::{
     def_use, gumtrace as gumtrace_parser, insn_class, parser,
+    qbdi as qbdi_parser,
     types::{self as types, RegId},
     insn_class::InsnClass,
 };
@@ -152,7 +153,9 @@ pub fn scan_unified(
 
         pos = if line_end < len { line_end + 1 } else { len };
 
-        // ── Gumtrace special line early interception (before deps.start_row) ──
+        // ── Special line early interception (before deps.start_row) ──
+        // GumTrace: non-instruction lines (call func, args, ret, hexdump)
+        // QBDI: comment/metadata lines (# ...)
         if format == types::TraceFormat::Gumtrace && gumtrace_parser::is_special_line(raw_line) {
             let i = state.line_count;
             // Special lines still occupy a row in deps (keep indices aligned)
@@ -237,10 +240,20 @@ pub fn scan_unified(
             }
         }
 
+        // QBDI comment lines skip
+        if format == types::TraceFormat::Qbdi && qbdi_parser::is_qbdi_comment_line(raw_line) {
+            state.line_count += 1;
+            if state.line_count % CHECKPOINT_INTERVAL == 0 {
+                reg_ckpts.save_checkpoint(&reg_values);
+            }
+            continue;
+        }
+
         // Parse; unparseable lines get an empty dep set
         let parsed = match format {
             types::TraceFormat::Unidbg => parser::parse_line(raw_line),
             types::TraceFormat::Gumtrace => gumtrace_parser::parse_line_gumtrace(raw_line),
+            types::TraceFormat::Qbdi => qbdi_parser::parse_line_qbdi(raw_line),
         };
         let Some(line) = parsed else {
             state.line_count += 1;

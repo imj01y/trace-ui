@@ -6,7 +6,7 @@ use trace_parser::gumtrace::CallAnnotation;
 use trace_parser::types::TraceFormat;
 
 use crate::api_types::{CallInfoDto, SearchMatch, SearchOptions, SearchResultLite};
-use crate::browse::{parse_trace_line, parse_trace_line_gumtrace};
+use crate::browse::{parse_trace_line, parse_trace_line_gumtrace, parse_trace_line_qbdi};
 use crate::error::{Result, TraceError};
 use crate::utils::ascii_contains;
 
@@ -410,6 +410,7 @@ impl TraceEngine {
             let parsed = match trace_format {
                 TraceFormat::Unidbg => parse_trace_line(seq, line),
                 TraceFormat::Gumtrace => parse_trace_line_gumtrace(seq, line),
+                TraceFormat::Qbdi => parse_trace_line_qbdi(seq, line),
             };
 
             if let Some(parsed) = parsed {

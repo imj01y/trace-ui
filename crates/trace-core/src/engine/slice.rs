@@ -12,6 +12,7 @@ use trace_parser::types::{parse_reg, RegId, TraceFormat};
 use trace_parser::insn_class::InsnClass;
 use trace_parser::{parser, insn_class, def_use};
 use trace_parser::gumtrace as gumtrace_parser;
+use trace_parser::qbdi as qbdi_parser;
 
 const MAX_RESOLVE_SCAN: u32 = 50000;
 
@@ -80,6 +81,7 @@ fn resolve_reg_def(
                 let parsed = match format {
                     TraceFormat::Unidbg => parser::parse_line(line_str),
                     TraceFormat::Gumtrace => gumtrace_parser::parse_line_gumtrace(line_str),
+                    TraceFormat::Qbdi => qbdi_parser::parse_line_qbdi(line_str),
                 };
                 if let Some(parsed) = parsed {
                     let cls = insn_class::classify_and_refine(&parsed);
@@ -124,6 +126,7 @@ fn resolve_mem_store(
                 let parsed = match format {
                     TraceFormat::Unidbg => parser::parse_line(line_str),
                     TraceFormat::Gumtrace => gumtrace_parser::parse_line_gumtrace(line_str),
+                    TraceFormat::Qbdi => qbdi_parser::parse_line_qbdi(line_str),
                 };
                 if let Some(parsed) = parsed {
                     if let Some(ref mem) = parsed.mem_op {

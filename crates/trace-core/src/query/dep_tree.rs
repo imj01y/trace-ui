@@ -9,6 +9,7 @@ use trace_parser::insn_class;
 use trace_parser::insn_class::InsnClass;
 use trace_parser::parser;
 use trace_parser::types::{Operand, ParsedLine, TraceFormat};
+use trace_parser::qbdi as qbdi_parser;
 use rustc_hash::FxHashMap;
 
 /// 扁平 DAG：节点数组 + 边列表，无递归嵌套
@@ -184,6 +185,7 @@ fn fill_node_info(
             let parsed = match format {
                 TraceFormat::Unidbg => parser::parse_line(line_str),
                 TraceFormat::Gumtrace => gumtrace_parser::parse_line_gumtrace(line_str),
+                TraceFormat::Qbdi => qbdi_parser::parse_line_qbdi(line_str),
             };
             if let Some(ref p) = parsed {
                 let cls = insn_class::classify_and_refine(p);
@@ -264,7 +266,6 @@ fn extract_asm(line_str: &str, format: TraceFormat) -> String {
         }
         TraceFormat::Gumtrace => {
             // Gumtrace 格式: [module] 0xABS!0xOFFSET mnemonic operands ; ...
-            // 提取偏移地址后的空格到 ';' 之间的指令文本
             let rest = if let Some(pos) = line_str.find("] ") {
                 &line_str[pos + 2..]
             } else {
@@ -280,6 +281,21 @@ fn extract_asm(line_str: &str, format: TraceFormat) -> String {
                 .map(|p| insn_start + p)
                 .unwrap_or(rest.len());
             rest[insn_start..insn_end].trim().to_string()
+        }
+        TraceFormat::Qbdi => {
+            // QBDI 格式: 0xADDR[ module+0xOFF]: mnemonic operands; ...
+            if !line_str.starts_with("0x") {
+                return String::new();
+            }
+            let colon_space = line_str.find(": ");
+            let insn_start = colon_space.map(|p| p + 2).unwrap_or(0);
+            if insn_start == 0 || insn_start >= line_str.len() {
+                return String::new();
+            }
+            let insn_end = line_str[insn_start..].find(';')
+                .map(|p| insn_start + p)
+                .unwrap_or(line_str.len());
+            line_str[insn_start..insn_end].trim().to_string()
         }
     }
 }

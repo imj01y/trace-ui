@@ -33,10 +33,13 @@ task_plan.md
 findings.md
 progress.md
 
-# Docs（仅允许 docs/images/ 和 mcp-guide.md）
+# Docs（仅允许 docs/images/、mcp-guide.md 和 QBDI 模板）
 docs/*
 !docs/images/
 !docs/mcp-guide.md
+!docs/qbdi-tracer-template.cpp
+!docs/qbdi-tracer-template.py
+!docs/qbdi-frida-tracer-template.js
 
 # Trace files
 *.trace

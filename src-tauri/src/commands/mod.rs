@@ -16,6 +16,7 @@ pub struct CreateSessionResult {
     session_id: String,
     total_lines: u32,
     file_size: u64,
+    trace_format: Option<String>,
 }
 
 #[tauri::command]
@@ -35,6 +36,7 @@ pub async fn create_session(
         session_id: info.session_id,
         total_lines: info.total_lines,
         file_size: info.file_size,
+        trace_format: info.trace_format.map(|f| format!("{:?}", f)),
     })
 }
 

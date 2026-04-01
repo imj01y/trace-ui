@@ -121,6 +121,121 @@ pub fn parse_trace_line_gumtrace(seq: u32, raw: &[u8]) -> Option<TraceLine> {
     })
 }
 
+/// 解析 QBDI 格式的 trace 行
+pub fn parse_trace_line_qbdi(seq: u32, raw: &[u8]) -> Option<TraceLine> {
+    let line_owned: String;
+    let line: &str = match std::str::from_utf8(raw) {
+        Ok(s) => s,
+        Err(_) => {
+            line_owned = bytes_to_hex_escaped(raw);
+            &line_owned
+        }
+    };
+
+    let bytes = line.as_bytes();
+    if bytes.len() < 4 || bytes[0] != b'0' || bytes[1] != b'x' {
+        return None;
+    }
+
+    // 1. Parse absolute address: 0xHEXDIGITS
+    let hex_end = bytes[2..]
+        .iter()
+        .position(|b| !b.is_ascii_hexdigit())
+        .map(|p| 2 + p)
+        .unwrap_or(bytes.len());
+
+    if hex_end <= 2 || hex_end >= bytes.len() {
+        return None;
+    }
+
+    let address = line[..hex_end].to_string();
+
+    // 2. Parse optional module info and find instruction start
+    let after_addr = bytes[hex_end];
+    let (so_name, so_offset, insn_start) = if after_addr == b':' {
+        let start = if hex_end + 2 <= bytes.len() && bytes[hex_end + 1] == b' ' {
+            hex_end + 2
+        } else {
+            hex_end + 1
+        };
+        (None, String::new(), start)
+    } else if after_addr == b' ' {
+        let rest = &line[hex_end + 1..];
+        if let Some(colon_space) = rest.find(": ") {
+            let module_part = &rest[..colon_space];
+            let (name, offset) = if let Some(plus) = module_part.rfind('+') {
+                (Some(module_part[..plus].to_string()), module_part[plus + 1..].to_string())
+            } else {
+                (Some(module_part.to_string()), String::new())
+            };
+            (name, offset, hex_end + 1 + colon_space + 2)
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+
+    if insn_start >= line.len() {
+        return None;
+    }
+
+    // 3. Extract instruction text and annotation area
+    let rest_str = &line[insn_start..];
+    let semicolon_pos = rest_str.find(';');
+    let (insn_end_rel, annot_start_rel) = if let Some(semi) = semicolon_pos {
+        (semi, semi + 1)
+    } else {
+        let annot = find_annotation_start_str(rest_str, 0);
+        (annot, annot)
+    };
+    let disasm = rest_str[..insn_end_rel].trim().to_string();
+    let annot_area = &rest_str[annot_start_rel..];
+
+    // 4. Memory operation
+    let mem_rw = if annot_area.contains("mem_w=0x") {
+        Some("W".to_string())
+    } else if annot_area.contains("mem_r=0x") {
+        Some("R".to_string())
+    } else {
+        None
+    };
+    let mem_addr = extract_gumtrace_mem_addr(annot_area);
+    let mem_size = extract_mem_size(&disasm);
+
+    // 5. Changes and reg_before (same arrow convention as GumTrace)
+    let (changes, reg_before) = if let Some(pos) = annot_area.find(" -> ") {
+        let changes = annot_area[pos + 4..].trim().to_string();
+        let before = annot_area[..pos].trim();
+        let reg_before = before.split_whitespace()
+            .filter(|tok| !tok.starts_with("mem_w=") && !tok.starts_with("mem_r="))
+            .collect::<Vec<_>>()
+            .join(" ");
+        (changes, reg_before)
+    } else {
+        let reg_before = annot_area.trim().split_whitespace()
+            .filter(|tok| !tok.starts_with("mem_w=") && !tok.starts_with("mem_r="))
+            .collect::<Vec<_>>()
+            .join(" ");
+        (String::new(), reg_before)
+    };
+
+    Some(TraceLine {
+        seq,
+        address,
+        so_offset,
+        so_name,
+        disasm,
+        changes,
+        reg_before,
+        mem_rw,
+        mem_addr,
+        mem_size,
+        raw: line.to_string(),
+        call_info: None,
+    })
+}
+
 /// 当行内没有 ';' 分隔符时，通过 '=0x' 模式找到寄存器注解的起始位置。
 fn find_annotation_start_str(text: &str, insn_start: usize) -> usize {
     let search = &text[insn_start..];

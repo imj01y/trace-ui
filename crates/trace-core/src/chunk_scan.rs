@@ -26,6 +26,7 @@ use crate::scan_unified::bytes_to_hex_escaped;
 use trace_parser::gumtrace as gumtrace_parser;
 use trace_parser::insn_class::{self, InsnClass};
 use trace_parser::parser;
+use trace_parser::qbdi as qbdi_parser;
 use trace_parser::types::{Operand, RegId, TraceFormat};
 
 const CHECKPOINT_INTERVAL: u32 = 1000;
@@ -161,6 +162,15 @@ pub fn scan_chunk(
             }
         }
 
+        // ── QBDI comment line skip ──
+        if format == TraceFormat::Qbdi && qbdi_parser::is_qbdi_comment_line(raw_line) {
+            line_count += 1;
+            if line_count % CHECKPOINT_INTERVAL == 0 {
+                reg_ckpts.save_checkpoint(&reg_values);
+            }
+            continue;
+        }
+
         // ── Gumtrace special line early interception ──
         if format == TraceFormat::Gumtrace && gumtrace_parser::is_special_line(raw_line) {
             let i = line_count;
@@ -230,6 +240,7 @@ pub fn scan_chunk(
         let parsed = match format {
             TraceFormat::Unidbg => parser::parse_line(raw_line),
             TraceFormat::Gumtrace => gumtrace_parser::parse_line_gumtrace(raw_line),
+            TraceFormat::Qbdi => qbdi_parser::parse_line_qbdi(raw_line),
         };
         let Some(line) = parsed else {
             needs_control_dep.push(false);

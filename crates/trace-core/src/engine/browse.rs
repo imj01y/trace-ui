@@ -19,6 +19,7 @@ impl super::TraceEngine {
                 let parsed = match format {
                     TraceFormat::Unidbg => crate::browse::parse_trace_line(seq, raw),
                     TraceFormat::Gumtrace => crate::browse::parse_trace_line_gumtrace(seq, raw),
+                    TraceFormat::Qbdi => crate::browse::parse_trace_line_qbdi(seq, raw),
                 };
                 if let Some(mut line) = parsed {
                     // Fill call_info from call_annotations

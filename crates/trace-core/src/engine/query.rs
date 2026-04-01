@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
 use crate::api_types::*;
-use crate::browse::{parse_trace_line, parse_trace_line_gumtrace};
+use crate::browse::{parse_trace_line, parse_trace_line_gumtrace, parse_trace_line_qbdi};
 use crate::error::{TraceError, Result};
 use crate::flat::line_index::LineIndexView;
 use crate::phase2::extract_insn_offset;
@@ -111,6 +111,7 @@ fn parse_line_for_format(line: &str, format: TraceFormat) -> Option<trace_parser
     match format {
         TraceFormat::Unidbg => parser::parse_line(line),
         TraceFormat::Gumtrace => gumtrace_parser::parse_line_gumtrace(line),
+        TraceFormat::Qbdi => trace_parser::qbdi::parse_line_qbdi(line),
     }
 }
 
@@ -186,6 +187,7 @@ fn scan_chunk(
                 let parsed = match trace_format {
                     TraceFormat::Unidbg => parse_trace_line(seq, line),
                     TraceFormat::Gumtrace => parse_trace_line_gumtrace(seq, line),
+                    TraceFormat::Qbdi => parse_trace_line_qbdi(seq, line),
                 };
                 if let Some(p) = parsed {
                     matches.push(crate::query::crypto::CryptoMatch {
@@ -323,6 +325,7 @@ impl super::TraceEngine {
                         .and_then(|raw| match format {
                             TraceFormat::Unidbg => parse_trace_line(rec.seq, raw),
                             TraceFormat::Gumtrace => parse_trace_line_gumtrace(rec.seq, raw),
+                            TraceFormat::Qbdi => parse_trace_line_qbdi(rec.seq, raw),
                         })
                         .map(|parsed| parsed.disasm)
                         .unwrap_or_default();
@@ -380,6 +383,7 @@ impl super::TraceEngine {
                     .and_then(|raw| match format {
                         TraceFormat::Unidbg => parse_trace_line(rec.seq, raw),
                         TraceFormat::Gumtrace => parse_trace_line_gumtrace(rec.seq, raw),
+                        TraceFormat::Qbdi => parse_trace_line_qbdi(rec.seq, raw),
                     })
                     .map(|parsed| parsed.disasm)
                     .unwrap_or_default();
@@ -446,6 +450,7 @@ impl super::TraceEngine {
             let parsed = match format {
                 TraceFormat::Unidbg => parse_trace_line(seq, raw),
                 TraceFormat::Gumtrace => parse_trace_line_gumtrace(seq, raw),
+                TraceFormat::Qbdi => parse_trace_line_qbdi(seq, raw),
             };
             if let Some(parsed) = parsed {
                 let pc_display = if let Some(hex_str) = parsed.address.strip_prefix("0x")
@@ -646,6 +651,7 @@ impl super::TraceEngine {
                             .and_then(|raw| match format {
                                 TraceFormat::Unidbg => parse_trace_line(rec.seq, raw),
                                 TraceFormat::Gumtrace => parse_trace_line_gumtrace(rec.seq, raw),
+                                TraceFormat::Qbdi => parse_trace_line_qbdi(rec.seq, raw),
                             })
                             .map(|t| t.disasm)
                             .unwrap_or_default();
@@ -845,10 +851,7 @@ impl super::TraceEngine {
 
         if let Some(raw) = lidx_view.get_line(&state.mmap, seq) {
             if let Ok(line_str) = std::str::from_utf8(raw) {
-                let parsed = match format {
-                    TraceFormat::Unidbg => parser::parse_line(line_str),
-                    TraceFormat::Gumtrace => gumtrace_parser::parse_line_gumtrace(line_str),
-                };
+                let parsed = parse_line_for_format(line_str, format);
                 if let Some(ref p) = parsed {
                     let cls = insn_class::classify_and_refine(p);
                     let (defs, _) = def_use::determine_def_use(cls, p);

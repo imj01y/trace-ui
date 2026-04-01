@@ -6,6 +6,7 @@ use std::fmt;
 pub enum TraceFormat {
     Unidbg,
     Gumtrace,
+    Qbdi,
 }
 
 impl Default for TraceFormat {

@@ -177,6 +177,7 @@ export function useTraceStore(skipStrings: boolean = false) {
         fileName,
         totalLines: result.totalLines,
         fileSize: result.fileSize,
+        traceFormat: result.traceFormat,
         isLoaded: true,
         isPhase2Ready: false,
         indexProgress: 0,

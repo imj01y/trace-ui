@@ -31,6 +31,7 @@ export interface CreateSessionResult {
   sessionId: string;
   totalLines: number;
   fileSize: number;
+  traceFormat: string | null;
 }
 
 export interface SessionData {
@@ -39,6 +40,7 @@ export interface SessionData {
   fileName: string;
   totalLines: number;
   fileSize: number;
+  traceFormat: string | null;
   isLoaded: boolean;
   isPhase2Ready: boolean;
   indexProgress: number;
@@ -130,7 +132,7 @@ export interface FunctionCallsResult {
 export interface NodeInfo {
   seq: number;
   expression: string;
-  asm: string;              // 新增
+  asm: string; // 新增
   operation: string;
   isLeaf: boolean;
   value: string | null;

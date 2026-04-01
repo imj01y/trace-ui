@@ -128,6 +128,18 @@ pub fn detect_format(data: &[u8]) -> TraceFormat {
             if line[0] == b'[' && memchr::memchr(b'!', line).is_some() {
                 return TraceFormat::Gumtrace;
             }
+            // qbdi: starts with "0x" followed by hex digits, then space or ':'
+            if line.len() > 4 && line[0] == b'0' && line[1] == b'x' {
+                let hex_end = line[2..].iter()
+                    .position(|b| !b.is_ascii_hexdigit())
+                    .unwrap_or(line.len() - 2);
+                if hex_end > 0 {
+                    let after = line[2 + hex_end];
+                    if after == b':' || after == b' ' {
+                        return TraceFormat::Qbdi;
+                    }
+                }
+            }
         }
 
         pos = end + 1;
@@ -303,7 +315,7 @@ fn parse_line_gumtrace_inner(raw: &str, extract_regs: bool) -> Option<ParsedLine
 
     // 8. Parse memory ops: mem_w=0xADDR or mem_r=0xADDR
     let mem_op = if annot_start < bytes.len() {
-        find_gumtrace_mem_op(&bytes[annot_start..], mnemonic, operand_text, raw_first_reg_prefix, bytes, arrow_abs_pos, result_line.lane_index, result_line.lane_elem_width)
+        find_dbi_mem_op(&bytes[annot_start..], mnemonic, operand_text, raw_first_reg_prefix, bytes, arrow_abs_pos, result_line.lane_index, result_line.lane_elem_width)
     } else {
         None
     };
@@ -326,7 +338,7 @@ fn parse_line_gumtrace_inner(raw: &str, extract_regs: bool) -> Option<ParsedLine
 
 /// 当行内没有 ';' 分隔符时，通过 '=0x' 模式找到寄存器注解的起始位置。
 /// 例如 `stp xzr, xzr, [x0]x0=0x7c78c651b0` → 返回 `x0=0x` 中 `x` 的位置。
-fn find_annotation_start(bytes: &[u8], insn_start: usize) -> usize {
+pub fn find_annotation_start(bytes: &[u8], insn_start: usize) -> usize {
     let search = &bytes[insn_start..];
     let mut pos = 0;
     while pos + 3 < search.len() {
@@ -354,9 +366,9 @@ fn find_annotation_start(bytes: &[u8], insn_start: usize) -> usize {
     bytes.len()
 }
 
-/// GumTrace 寄存器别名：x29↔fp, x30↔lr。
-/// 操作数文本用架构名（x29, x30），但 GumTrace 注解可能用别名（fp, lr）。
-fn gumtrace_reg_alias(reg_name: &str) -> Option<&'static str> {
+/// 寄存器别名：x29↔fp, x30↔lr。
+/// 操作数文本用架构名（x29, x30），但 DBI 注解可能用别名（fp, lr）。
+pub fn reg_alias(reg_name: &str) -> Option<&'static str> {
     match reg_name {
         "x29" => Some("fp"),
         "x30" => Some("lr"),
@@ -364,17 +376,17 @@ fn gumtrace_reg_alias(reg_name: &str) -> Option<&'static str> {
     }
 }
 
-/// 在 GumTrace 注解中查找寄存器值，先尝试原名再尝试别名。
-fn find_reg_value_with_alias(bytes: &[u8], reg_name: &str, start_pos: usize) -> Option<u64> {
+/// 在 DBI 注解中查找寄存器值，先尝试原名再尝试别名。
+pub fn find_reg_value_with_alias(bytes: &[u8], reg_name: &str, start_pos: usize) -> Option<u64> {
     find_reg_value(bytes, reg_name.as_bytes(), start_pos)
         .or_else(|| {
-            gumtrace_reg_alias(reg_name)
+            reg_alias(reg_name)
                 .and_then(|alias| find_reg_value(bytes, alias.as_bytes(), start_pos))
         })
 }
 
-/// Find mem_w=0xADDR or mem_r=0xADDR in gumtrace format.
-fn find_gumtrace_mem_op(
+/// Find mem_w=0xADDR or mem_r=0xADDR in DBI trace annotation.
+pub fn find_dbi_mem_op(
     search: &[u8],
     mnemonic: &str,
     operand_text: &str,
@@ -522,6 +534,24 @@ mod tests {
     fn test_detect_format_gumtrace() {
         let data = b"[libmetasec_ov.so] 0x7522e85ce0!0x82ce0 sub x0, x29, #0x80; x0=0x75150f2e20\n";
         assert_eq!(detect_format(data), TraceFormat::Gumtrace);
+    }
+
+    #[test]
+    fn test_detect_format_qbdi_no_module() {
+        let data = b"0x7522e85ce0: sub x0, x29, #0x80; x0=0x0 x29=0x100 -> x0=0x80\n";
+        assert_eq!(detect_format(data), TraceFormat::Qbdi);
+    }
+
+    #[test]
+    fn test_detect_format_qbdi_with_module() {
+        let data = b"0x7522e85ce0 libfoo.so+0x82ce0: sub x0, x29, #0x80; x0=0x0 -> x0=0x80\n";
+        assert_eq!(detect_format(data), TraceFormat::Qbdi);
+    }
+
+    #[test]
+    fn test_detect_format_qbdi_with_comment() {
+        let data = b"# QBDI ARM64 Trace\n0x7522e85ce0: sub x0, x29, #0x80\n";
+        assert_eq!(detect_format(data), TraceFormat::Qbdi);
     }
 
     #[test]

@@ -1125,6 +1125,7 @@ function App() {
                       fileName: s.fileName,
                       filePath: s.filePath,
                       isPhase2Ready: s.isPhase2Ready,
+                      traceFormat: s.traceFormat,
                     }))}
                   activeSessionId={activeSessionId}
                   onActivate={setActiveSessionId}
