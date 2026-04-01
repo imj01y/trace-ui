@@ -3,10 +3,6 @@ name = "trace-mcp"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "trace-cli"
-path = "src/main.rs"
-
 [dependencies]
 trace-core = { path = "../trace-core" }
 rmcp = { version = "1.2", features = [
