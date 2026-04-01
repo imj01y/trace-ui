@@ -235,17 +235,6 @@ impl TraceToolHandler {
         }).await
     }
 
-    #[tool(
-        name = "close_trace",
-        description = "Close a trace session and free its resources. \
-            Call this when you're done analyzing a trace file."
-    )]
-    fn close_trace(&self, Parameters(req): Parameters<CloseTraceRequest>) -> Result<String, String> {
-        self.engine.close_session(&req.session_id)
-            .map(|()| "Session closed.".to_string())
-            .map_err(|e| e.to_string())
-    }
-
     // ━━━━━━━━━━━━━━━━━━━━━━ 数据查看 ━━━━━━━━━━━━━━━━━━━━━━
 
     #[tool(
@@ -268,19 +257,6 @@ impl TraceToolHandler {
             "start_seq": req.start_seq,
             "requested": count,
         })))
-    }
-
-    #[tool(
-        name = "get_registers",
-        description = "Get the complete register snapshot at a specific instruction line. \
-            Shows all ARM64 registers (X0-X30, SP, PC, NZCV) with their values, \
-            which registers were modified by this instruction, and which were read."
-    )]
-    fn get_registers(&self, Parameters(req): Parameters<GetRegistersRequest>) -> Result<String, String> {
-        let sid = self.resolve_session(req.session_id)?;
-        self.engine.get_registers_at(&sid, req.seq)
-            .map(|regs| json(&regs))
-            .map_err(|e| e.to_string())
     }
 
     #[tool(

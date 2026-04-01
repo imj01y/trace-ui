@@ -15,12 +15,6 @@ pub struct OpenTraceRequest {
     pub skip_strings: bool,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CloseTraceRequest {
-    #[schemars(description = "Session ID returned by open_trace")]
-    pub session_id: String,
-}
-
 // ── 数据查看 ──
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -38,14 +32,6 @@ pub struct GetTraceLinesRequest {
 }
 
 fn default_line_count() -> u32 { 20 }
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetRegistersRequest {
-    #[schemars(description = "Session ID (optional if only one session is open)")]
-    pub session_id: Option<String>,
-    #[schemars(description = "Line number (0-based) to inspect registers at")]
-    pub seq: u32,
-}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetMemoryRequest {
